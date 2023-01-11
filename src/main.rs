@@ -1,16 +1,19 @@
-use iced::alignment::{self, Alignment};
-use iced::theme::{self, Theme};
-use iced::widget::Column;
-use iced::widget::{
-    self, button, checkbox, column, container, row, scrollable, text, text_input, Text,
-};
+use iced::alignment;
+use iced::futures::channel::oneshot;
+use iced::futures::executor::{self, ThreadPool};
+use iced::theme::Theme;
+use iced::widget::{button, column, container, scrollable, text, text_input};
 use iced::window;
 use iced::{Application, Element};
-use iced::{Color, Command, Font, Length, Settings, Subscription};
-use img_hash::HasherConfig;
-use std::path::Path;
-use std::{ffi::OsStr, path::PathBuf, process::Stdio};
+use iced::{Color, Command, Length, Settings};
+// use img_hash::HasherConfig;
+// use std::path::Path;
+use std::path::PathBuf;
 use walkdir::WalkDir;
+
+const KNOWN_EXTENSIONS: [&'static str; 12] = [
+    "png", "jpg", "jpeg", "gif", "bmp", "ico", "tiff", "webp", "avif", "pnm", "dds", "tga",
+];
 
 #[derive(Debug)]
 struct Ui {
@@ -21,6 +24,8 @@ struct Ui {
 struct UiState {
     root: Option<PathBuf>,
     root_input: String,
+
+    paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -31,35 +36,11 @@ pub struct Image {
 
 #[derive(Debug, Clone)]
 pub enum UiMessage {
-    RootSelected(PathBuf),
+    RootSelected(String),
     RootInputChange(String),
+    Paths(Vec<PathBuf>),
     HashComputed(Image),
     SimilarityFound(Image, Image),
-}
-
-impl UiState {
-    pub fn view(&self) -> Column<UiMessage> {
-        // We use a column: a simple vertical layout
-        column![
-            button("Image folder").on_press(UiMessage::RootSelected(PathBuf::from(
-                "/Users/pgaultier/Downloads"
-            ))),
-            if let Some(root) = &self.root {
-                text(root.display())
-            } else {
-                text("No directory selected")
-            },
-        ]
-    }
-
-    pub fn update(&mut self, message: UiMessage) {
-        match message {
-            UiMessage::RootSelected(_root) => {}
-            UiMessage::RootInputChange(content) =>{ self.root_input = content;},
-            UiMessage::HashComputed(_img) => {}
-            UiMessage::SimilarityFound(_a, _b) => {}
-        }
-    }
 }
 
 impl Application for Ui {
@@ -74,6 +55,7 @@ impl Application for Ui {
                 state: UiState {
                     root: None,
                     root_input: String::new(),
+                    paths: Vec::new(),
                 },
             },
             Command::none(),
@@ -84,21 +66,58 @@ impl Application for Ui {
         String::from("Image dedup")
     }
 
-    fn update(&mut self, _message: Self::Message) -> Command<Self::Message> {
+    fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
+        match message {
+            UiMessage::RootSelected(root) => {
+                dbg!(&root);
+                let root = PathBuf::from(root);
+                let pool = ThreadPool::new().unwrap();
+                let (tx, rx) = oneshot::channel();
+
+                let future = async {
+                    let paths = WalkDir::new(root)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
+                        .filter(|e| e.file_type().is_file())
+                        .filter(|e| e.path().extension().is_some())
+                        .map(|e| e.path().to_owned())
+                        .collect::<Vec<_>>();
+
+                    tx.send(paths).unwrap();
+                };
+                pool.spawn_ok(future);
+
+                Command::perform(async { rx.await }, |paths| UiMessage::Paths(paths.unwrap()))
+            }
+            UiMessage::RootInputChange(content) => {
+                self.state.root_input = content;
+                Command::none()
+            }
+            UiMessage::Paths(paths) => {
+                self.state.paths = paths;
+                Command::none()
+            }
+            UiMessage::HashComputed(_img) => Command::none(),
+            UiMessage::SimilarityFound(_a, _b) => Command::none(),
+        };
         Command::none()
     }
 
     fn view(&self) -> Element<Self::Message> {
-        let title = text("todos")
+        let title = text("Image deduplication")
             .width(Length::Fill)
-            .size(100)
+            .size(80)
             .style(Color::from([0.5, 0.5, 0.5]))
             .horizontal_alignment(alignment::Horizontal::Center);
 
         let text_input = text_input("Image directory", &self.state.root_input, |content| {
             UiMessage::RootInputChange(content)
         });
-        let content = column![title, text_input].spacing(20).max_width(800);
+        let button =
+            button("Analyze").on_press(UiMessage::RootSelected(self.state.root_input.clone()));
+        let content = column![title, text_input, button]
+            .spacing(20)
+            .max_width(800);
 
         scrollable(
             container(content)
@@ -129,9 +148,6 @@ fn main() -> iced::Result {
     //     .hash_size(16, 16)
     //     .hash_alg(img_hash::HashAlg::DoubleGradient)
     //     .to_hasher();
-    // let known_extensions = [
-    //     "png", "jpg", "jpeg", "gif", "bmp", "ico", "tiff", "webp", "avif", "pnm", "dds", "tga",
-    // ]
     // .map(OsStr::new);
 
     // let mut path_hashes = Vec::with_capacity(100);
