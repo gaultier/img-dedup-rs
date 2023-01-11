@@ -1,10 +1,10 @@
 use img_hash::HasherConfig;
-use std::ffi::OsStr;
+use std::{ffi::OsStr, process::Stdio};
 use walkdir::WalkDir;
 
 fn main() {
-    let arg0 = std::env::args().next();
-    let root = arg0
+    let arg1 = std::env::args().nth(1);
+    let root = arg1
         .as_ref()
         .map(|s| s.as_str())
         .unwrap_or("/Users/pgaultier/Downloads");
@@ -49,19 +49,51 @@ fn main() {
     }
 
     let mut similar_count = 0usize;
+    let similarity_threshold = 20;
     for (i, (a_hash, a_path)) in path_hashes.iter().enumerate() {
         for j in 0..i {
             let (b_hash, b_path) = &path_hashes[j];
-            if a_hash.dist(b_hash) < 3 {
+            assert_ne!(a_path, b_path);
+
+            if a_hash.dist(b_hash) <= similarity_threshold {
                 println!(
                     "{} and {} might be similar",
                     a_path.display(),
                     b_path.display(),
                 );
                 similar_count += 1;
+
+                let cmd = std::process::Command::new("open")
+                    .args([a_path, b_path])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn();
+                if let Err(err) = cmd {
+                    eprintln!(
+                        "Failed to run open: {} {} {}",
+                        err,
+                        a_path.display(),
+                        b_path.display()
+                    );
+                    continue;
+                }
+                if let Err(err) = cmd.unwrap().wait() {
+                    eprintln!(
+                        "Failed to wait for open: {} {} {}",
+                        err,
+                        a_path.display(),
+                        b_path.display()
+                    );
+                    continue;
+                }
             }
         }
     }
     let total = path_hashes.len() * (path_hashes.len() - 1) / 2;
-    println!("Similar: {}/{}", similar_count, total);
+    println!(
+        "Analyzed: {}, similar: {}/{}",
+        path_hashes.len(),
+        similar_count,
+        total
+    );
 }
