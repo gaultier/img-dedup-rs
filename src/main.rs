@@ -1,15 +1,20 @@
-use image::io::Reader as ImageReader;
-use image::Luma;
+use img_hash::HasherConfig;
 use std::ffi::OsStr;
-use std::path::PathBuf;
 use walkdir::WalkDir;
 
 fn main() {
-    let root = "/Users/pgaultier/Downloads/wallpapers-hd/";
+    let hasher = HasherConfig::new()
+        .hash_size(16, 16)
+        .hash_alg(img_hash::HashAlg::DoubleGradient)
+        .to_hasher();
+    let root = "/Users/pgaultier/Downloads";
     let known_extensions = [
         "png", "jpg", "gif", "bmp", "ico", "tiff", "webp", "avif", "pnm", "dds", "tga",
     ]
     .map(OsStr::new);
+
+    let mut path_hashes = Vec::with_capacity(100);
+
     for entry in WalkDir::new(root) {
         let entry = entry.unwrap();
         if !entry.file_type().is_file() {
@@ -26,37 +31,31 @@ fn main() {
         }
         println!("{}", entry.path().display());
 
-        let file = ImageReader::open(entry.path());
-        if let Err(err) = file {
+        let img = image::open(entry.path());
+        if let Err(err) = img {
             eprintln!("Failed to open {:?}: {}", entry.path(), err);
             continue;
         }
-        let content = file.unwrap();
-        let img = content.decode();
-        if let Err(err) = img {
-            eprintln!("Failed to decode {:?}: {}", entry.path(), err);
-            continue;
+        let img = img.unwrap();
+
+        let hash = hasher.hash_image(&img);
+        println!("Image hash: {}", hash.to_base64());
+
+        path_hashes.push((hash, entry.path().to_owned()));
+    }
+
+    println!("{:?}", path_hashes);
+
+    for (i, (a_hash, a_path)) in path_hashes.iter().enumerate() {
+        for j in 0..i {
+            let (b_hash, b_path) = &path_hashes[j];
+            if a_hash.dist(b_hash) < 3 {
+                println!(
+                    "{} and {} might be similar",
+                    a_path.display(),
+                    b_path.display(),
+                );
+            }
         }
-
-        let small_size = 50;
-        let resized =
-            img.unwrap()
-                .resize(small_size, small_size, image::imageops::FilterType::Nearest);
-        let mut grayscale = resized.grayscale().to_luma8();
-
-        let avg_rgb = 255.0 / 2.0;
-        let avg_luma = (0.2126 * avg_rgb + 0.7152 * avg_rgb + 0.0722 * avg_rgb) as u8;
-        grayscale
-            .pixels_mut()
-            .for_each(|p| *p = Luma::from(if p.0[0] > avg_luma { [1] } else { [255] }));
-
-        let mut tmp_path = PathBuf::new();
-        tmp_path.push("/tmp");
-        tmp_path.push(entry.file_name());
-        if let Err(err) = grayscale.save(&tmp_path) {
-            eprintln!("Failed to save {:?}: {}", &tmp_path, err);
-            continue;
-        }
-        println!("Saved {:?}", &tmp_path);
     }
 }
