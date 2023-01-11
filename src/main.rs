@@ -12,14 +12,13 @@ use std::{ffi::OsStr, path::PathBuf, process::Stdio};
 use walkdir::WalkDir;
 
 #[derive(Debug)]
-enum Ui {
-    Loading,
-    Loaded(UiState),
+struct Ui {
+    state: UiState,
 }
 
 #[derive(Debug)]
 struct UiState {
-    root: PathBuf,
+    root: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -42,7 +41,11 @@ impl UiState {
             button("Image folder").on_press(UiMessage::RootSelected(PathBuf::from(
                 "/Users/pgaultier/Downloads"
             ))),
-            text(self.root.display()),
+            if let Some(root) = &self.root {
+                text(root.display())
+            } else {
+                text("No directory selected")
+            },
         ]
     }
 
@@ -62,66 +65,41 @@ impl Application for Ui {
     type Flags = ();
 
     fn new(_flags: ()) -> (Ui, Command<Self::Message>) {
-        (Ui::Loading, Command::none())
+        (
+            Ui {
+                state: UiState { root: None },
+            },
+            Command::none(),
+        )
     }
 
     fn title(&self) -> String {
         String::from("Image dedup")
     }
 
-    fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
+    fn update(&mut self, _message: Self::Message) -> Command<Self::Message> {
         Command::none()
     }
 
     fn view(&self) -> Element<Self::Message> {
-        match self {
-            Ui::Loading => loading_message(),
-            Ui::Loaded(state) => {
-                let title = text("todos")
-                    .width(Length::Fill)
-                    .size(100)
-                    .style(Color::from([0.5, 0.5, 0.5]))
-                    .horizontal_alignment(alignment::Horizontal::Center);
+        let title = text("todos")
+            .width(Length::Fill)
+            .size(100)
+            .style(Color::from([0.5, 0.5, 0.5]))
+            .horizontal_alignment(alignment::Horizontal::Center);
 
-                let content = column![title].spacing(20).max_width(800);
+        let content = column![title].spacing(20).max_width(800);
 
-                scrollable(
-                    container(content)
-                        .width(Length::Fill)
-                        .padding(40)
-                        .center_x(),
-                )
-                .into()
-            }
-        }
+        scrollable(
+            container(content)
+                .width(Length::Fill)
+                .padding(40)
+                .center_x(),
+        )
+        .into()
     }
 }
 
-fn loading_message<'a>() -> Element<'a, UiMessage> {
-    container(
-        text("Loading...")
-            .horizontal_alignment(alignment::Horizontal::Center)
-            .size(50),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .center_y()
-    .into()
-}
-
-fn empty_message(message: &str) -> Element<'_, UiMessage> {
-    container(
-        text(message)
-            .width(Length::Fill)
-            .size(25)
-            .horizontal_alignment(alignment::Horizontal::Center)
-            .style(Color::from([0.7, 0.7, 0.7])),
-    )
-    .width(Length::Fill)
-    .height(Length::Units(200))
-    .center_y()
-    .into()
-}
 
 fn main() -> iced::Result {
     Ui::run(Settings {
