@@ -1,10 +1,8 @@
 use iced::alignment;
-use iced::futures::channel::oneshot;
-use iced::futures::executor::{self, ThreadPool};
 use iced::theme::Theme;
 use iced::widget::{button, column, container, scrollable, text, text_input};
 use iced::window;
-use iced::{Application, Element};
+use iced::{Application, Element, Subscription};
 use iced::{Color, Command, Length, Settings};
 // use img_hash::HasherConfig;
 // use std::path::Path;
@@ -69,25 +67,20 @@ impl Application for Ui {
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
             UiMessage::RootSelected(root) => {
-                dbg!(&root);
                 let root = PathBuf::from(root);
-                let pool = ThreadPool::new().unwrap();
-                let (tx, rx) = oneshot::channel();
 
-                let future = async {
-                    let paths = WalkDir::new(root)
-                        .into_iter()
-                        .filter_map(|e| e.ok())
-                        .filter(|e| e.file_type().is_file())
-                        .filter(|e| e.path().extension().is_some())
-                        .map(|e| e.path().to_owned())
-                        .collect::<Vec<_>>();
+                let paths = WalkDir::new(root)
+                    .into_iter()
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.file_type().is_file())
+                    .filter(|e| e.path().extension().is_some())
+                    .map(|e| e.path().to_owned())
+                    .collect::<Vec<_>>();
+                self.state.paths = paths;
 
-                    tx.send(paths).unwrap();
-                };
-                pool.spawn_ok(future);
+                // Command::batch(paths.iter().)
 
-                Command::perform(async { rx.await }, |paths| UiMessage::Paths(paths.unwrap()))
+                Command::none()
             }
             UiMessage::RootInputChange(content) => {
                 self.state.root_input = content;
@@ -99,8 +92,7 @@ impl Application for Ui {
             }
             UiMessage::HashComputed(_img) => Command::none(),
             UiMessage::SimilarityFound(_a, _b) => Command::none(),
-        };
-        Command::none()
+        }
     }
 
     fn view(&self) -> Element<Self::Message> {
@@ -115,7 +107,17 @@ impl Application for Ui {
         });
         let button =
             button("Analyze").on_press(UiMessage::RootSelected(self.state.root_input.clone()));
-        let content = column![title, text_input, button]
+
+        let rows: Element<_> = column(
+            self.state
+                .paths
+                .iter()
+                .map(|p| iced::widget::row![text(p.to_string_lossy())].into())
+                .collect::<Vec<_>>(),
+        )
+        .spacing(20)
+        .into();
+        let content = column![title, text_input, button, rows]
             .spacing(20)
             .max_width(800);
 

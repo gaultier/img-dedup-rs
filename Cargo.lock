@@ -1081,7 +1081,6 @@ dependencies = [
  "iced",
  "image",
  "img_hash",
- "tokio",
  "walkdir",
 ]
 
@@ -2169,17 +2168,6 @@ checksum = "c114d32f0c2ee43d585367cb013dfaba967ab9f62b90d9af0d696e955e70fa6c"
 dependencies = [
  "arrayref",
  "bytemuck",
-]
-
-[[package]]
-name = "tokio"
-version = "1.24.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d9f76183f91ecfb55e1d7d5602bd1d979e38a3a522fe900241cf195624d67ae"
-dependencies = [
- "autocfg",
- "pin-project-lite",
- "windows-sys 0.42.0",
 ]
 
 [[package]]
