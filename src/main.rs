@@ -8,6 +8,7 @@ use iced::window;
 use iced::{Application, Element};
 use iced::{Color, Command, Font, Length, Settings, Subscription};
 use img_hash::HasherConfig;
+use std::path::Path;
 use std::{ffi::OsStr, path::PathBuf, process::Stdio};
 use walkdir::WalkDir;
 
@@ -19,6 +20,7 @@ struct Ui {
 #[derive(Debug)]
 struct UiState {
     root: Option<PathBuf>,
+    root_input: String,
 }
 
 #[derive(Debug, Clone)]
@@ -30,6 +32,7 @@ pub struct Image {
 #[derive(Debug, Clone)]
 pub enum UiMessage {
     RootSelected(PathBuf),
+    RootInputChange(String),
     HashComputed(Image),
     SimilarityFound(Image, Image),
 }
@@ -52,6 +55,7 @@ impl UiState {
     pub fn update(&mut self, message: UiMessage) {
         match message {
             UiMessage::RootSelected(_root) => {}
+            UiMessage::RootInputChange(content) =>{ self.root_input = content;},
             UiMessage::HashComputed(_img) => {}
             UiMessage::SimilarityFound(_a, _b) => {}
         }
@@ -67,7 +71,10 @@ impl Application for Ui {
     fn new(_flags: ()) -> (Ui, Command<Self::Message>) {
         (
             Ui {
-                state: UiState { root: None },
+                state: UiState {
+                    root: None,
+                    root_input: String::new(),
+                },
             },
             Command::none(),
         )
@@ -88,7 +95,10 @@ impl Application for Ui {
             .style(Color::from([0.5, 0.5, 0.5]))
             .horizontal_alignment(alignment::Horizontal::Center);
 
-        let content = column![title].spacing(20).max_width(800);
+        let text_input = text_input("Image directory", &self.state.root_input, |content| {
+            UiMessage::RootInputChange(content)
+        });
+        let content = column![title, text_input].spacing(20).max_width(800);
 
         scrollable(
             container(content)
@@ -99,7 +109,6 @@ impl Application for Ui {
         .into()
     }
 }
-
 
 fn main() -> iced::Result {
     Ui::run(Settings {
