@@ -9,4 +9,5 @@ edition = "2021"
 walkdir = "2"
 image = "0.23.0"
 img_hash = "3.2.0"
-iced = "0.6"
+iced = {version = "0.6", features = ["wgpu", "image", "tokio"]}
+tokio = {version = "1.24.1", features = ["rt-multi-thread"]}

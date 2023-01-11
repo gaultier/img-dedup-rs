@@ -2,10 +2,9 @@ use iced::alignment;
 use iced::theme::Theme;
 use iced::widget::{button, column, container, scrollable, text, text_input};
 use iced::window;
-use iced::{Application, Element, Subscription};
+use iced::{Application, Element};
 use iced::{Color, Command, Length, Settings};
-// use img_hash::HasherConfig;
-// use std::path::Path;
+use img_hash::HasherConfig;
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
@@ -36,9 +35,9 @@ pub struct Image {
 pub enum UiMessage {
     RootSelected(String),
     RootInputChange(String),
-    Paths(Vec<PathBuf>),
     HashComputed(Image),
     SimilarityFound(Image, Image),
+    Err,
 }
 
 impl Application for Ui {
@@ -66,31 +65,75 @@ impl Application for Ui {
 
     fn update(&mut self, message: Self::Message) -> Command<Self::Message> {
         match message {
+            UiMessage::Err => Command::none(),
             UiMessage::RootSelected(root) => {
                 let root = PathBuf::from(root);
 
                 let paths = WalkDir::new(root)
                     .into_iter()
                     .filter_map(|e| e.ok())
-                    .filter(|e| e.file_type().is_file())
-                    .filter(|e| e.path().extension().is_some())
+                    .filter(|e| {
+                        e.file_type().is_file()
+                            && e.path().extension().is_some()
+                            && KNOWN_EXTENSIONS
+                                .iter()
+                                .find(|x| *x == &e.path().extension().unwrap())
+                                .is_some()
+                    })
                     .map(|e| e.path().to_owned())
                     .collect::<Vec<_>>();
-                self.state.paths = paths;
+                println!("{} paths", paths.len());
 
-                // Command::batch(paths.iter().)
+                Command::batch(
+                    paths
+                        .iter()
+                        .map(|path| {
+                            let path = path.clone();
+                            Command::perform(
+                                tokio::task::spawn_blocking(move || {
+                                    let img = image::open(&path);
 
-                Command::none()
+                                    if let Err(err) = img {
+                                        eprintln!("Failed to open {:?}: {}", path, err);
+                                        return Err(err);
+                                    }
+                                    let img = img.unwrap();
+
+                                    let hasher = HasherConfig::new()
+                                        .hash_size(16, 16)
+                                        .hash_alg(img_hash::HashAlg::DoubleGradient)
+                                        .to_hasher();
+
+                                    let hash = hasher.hash_image(&img);
+
+                                    println!("{} hashed", path.display());
+                                    Ok((path, hash))
+                                }),
+                                |hash_res| {
+                                    if hash_res.is_err() {
+                                        return UiMessage::Err;
+                                    }
+
+                                    let hash_res = hash_res.unwrap();
+                                    if let Ok((path, hash)) = hash_res {
+                                        UiMessage::HashComputed(Image { path, hash })
+                                    } else {
+                                        UiMessage::Err
+                                    }
+                                },
+                            )
+                        })
+                        .into_iter(),
+                )
             }
             UiMessage::RootInputChange(content) => {
                 self.state.root_input = content;
                 Command::none()
             }
-            UiMessage::Paths(paths) => {
-                self.state.paths = paths;
+            UiMessage::HashComputed(Image { path, hash: _hash }) => {
+                self.state.paths.push(path);
                 Command::none()
             }
-            UiMessage::HashComputed(_img) => Command::none(),
             UiMessage::SimilarityFound(_a, _b) => Command::none(),
         }
     }
