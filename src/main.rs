@@ -1,11 +1,11 @@
 use image::io::Reader as ImageReader;
-use image::{ Luma};
+use image::Luma;
 use std::ffi::OsStr;
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
 fn main() {
-    let root = "/Users/pgaultier/Downloads";
+    let root = "/Users/pgaultier/Downloads/wallpapers-hd/";
     let known_extensions = [
         "png", "jpg", "gif", "bmp", "ico", "tiff", "webp", "avif", "pnm", "dds", "tga",
     ]
@@ -38,13 +38,17 @@ fn main() {
             continue;
         }
 
-        let resized = img
-            .unwrap()
-            .resize(40, 40, image::imageops::FilterType::Nearest);
+        let small_size = 50;
+        let resized =
+            img.unwrap()
+                .resize(small_size, small_size, image::imageops::FilterType::Nearest);
         let mut grayscale = resized.grayscale().to_luma8();
+
+        let avg_rgb = 255.0 / 2.0;
+        let avg_luma = (0.2126 * avg_rgb + 0.7152 * avg_rgb + 0.0722 * avg_rgb) as u8;
         grayscale
             .pixels_mut()
-            .for_each(|p| *p = Luma::from(if p.0[0] > 255 / 2 { [1] } else { [0] }));
+            .for_each(|p| *p = Luma::from(if p.0[0] > avg_luma { [1] } else { [255] }));
 
         let mut tmp_path = PathBuf::new();
         tmp_path.push("/tmp");
