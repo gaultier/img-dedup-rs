@@ -3,13 +3,18 @@ use std::ffi::OsStr;
 use walkdir::WalkDir;
 
 fn main() {
+    let arg0 = std::env::args().next();
+    let root = arg0
+        .as_ref()
+        .map(|s| s.as_str())
+        .unwrap_or("/Users/pgaultier/Downloads");
+
     let hasher = HasherConfig::new()
         .hash_size(16, 16)
         .hash_alg(img_hash::HashAlg::DoubleGradient)
         .to_hasher();
-    let root = "/Users/pgaultier/Downloads";
     let known_extensions = [
-        "png", "jpg", "gif", "bmp", "ico", "tiff", "webp", "avif", "pnm", "dds", "tga",
+        "png", "jpg", "jpeg", "gif", "bmp", "ico", "tiff", "webp", "avif", "pnm", "dds", "tga",
     ]
     .map(OsStr::new);
 
@@ -39,13 +44,11 @@ fn main() {
         let img = img.unwrap();
 
         let hash = hasher.hash_image(&img);
-        println!("Image hash: {}", hash.to_base64());
 
         path_hashes.push((hash, entry.path().to_owned()));
     }
 
-    println!("{:?}", path_hashes);
-
+    let mut similar_count = 0usize;
     for (i, (a_hash, a_path)) in path_hashes.iter().enumerate() {
         for j in 0..i {
             let (b_hash, b_path) = &path_hashes[j];
@@ -55,7 +58,10 @@ fn main() {
                     a_path.display(),
                     b_path.display(),
                 );
+                similar_count += 1;
             }
         }
     }
+    let total = path_hashes.len() * (path_hashes.len() - 1) / 2;
+    println!("Similar: {}/{}", similar_count, total);
 }
