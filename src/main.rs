@@ -1,9 +1,11 @@
 use iced::alignment;
 use iced::theme::Theme;
+use iced::widget::image::Handle;
 use iced::widget::{button, column, container, scrollable, text, text_input};
 use iced::window;
 use iced::{Application, Element};
 use iced::{Color, Command, Length, Settings};
+use image::{DynamicImage, GenericImageView};
 use img_hash::HasherConfig;
 use std::path::PathBuf;
 use walkdir::WalkDir;
@@ -22,13 +24,14 @@ struct UiState {
     root: Option<PathBuf>,
     root_input: String,
 
-    paths: Vec<PathBuf>,
+    images: Vec<Image>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Image {
     path: PathBuf,
     hash: img_hash::ImageHash,
+    image: DynamicImage,
 }
 
 #[derive(Debug, Clone)]
@@ -52,7 +55,7 @@ impl Application for Ui {
                 state: UiState {
                     root: None,
                     root_input: String::new(),
-                    paths: Vec::new(),
+                    images: Vec::new(),
                 },
             },
             Command::none(),
@@ -107,7 +110,11 @@ impl Application for Ui {
                                     let hash = hasher.hash_image(&img);
 
                                     println!("{} hashed", path.display());
-                                    Ok((path, hash))
+                                    Ok(Image {
+                                        path,
+                                        hash,
+                                        image: img,
+                                    })
                                 }),
                                 |hash_res| {
                                     if hash_res.is_err() {
@@ -115,8 +122,8 @@ impl Application for Ui {
                                     }
 
                                     let hash_res = hash_res.unwrap();
-                                    if let Ok((path, hash)) = hash_res {
-                                        UiMessage::HashComputed(Image { path, hash })
+                                    if let Ok(img) = hash_res {
+                                        UiMessage::HashComputed(img)
                                     } else {
                                         UiMessage::Err
                                     }
@@ -130,8 +137,8 @@ impl Application for Ui {
                 self.state.root_input = content;
                 Command::none()
             }
-            UiMessage::HashComputed(Image { path, hash: _hash }) => {
-                self.state.paths.push(path);
+            UiMessage::HashComputed(image) => {
+                self.state.images.push(image);
                 Command::none()
             }
             UiMessage::SimilarityFound(_a, _b) => Command::none(),
@@ -153,9 +160,20 @@ impl Application for Ui {
 
         let rows: Element<_> = column(
             self.state
-                .paths
+                .images
                 .iter()
-                .map(|p| iced::widget::row![text(p.to_string_lossy())].into())
+                .map(|Image { path, hash, image }| {
+                    iced::widget::row![
+                        text(path.to_string_lossy()),
+                        text(hash.to_base64()),
+                        iced::widget::image(Handle::from_pixels(
+                            image.width(),
+                            image.height(),
+                            image.to_rgba8().into_raw(),
+                        )),
+                    ]
+                    .into()
+                })
                 .collect::<Vec<_>>(),
         )
         .spacing(20)
