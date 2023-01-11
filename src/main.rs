@@ -164,23 +164,18 @@ impl Application for Ui {
                 .iter()
                 .map(|Image { path, hash, image }| {
                     iced::widget::row![
-                        text(path.to_string_lossy()),
-                        text(hash.to_base64()),
-                        iced::widget::image(Handle::from_pixels(
-                            image.width(),
-                            image.height(),
-                            image.to_rgba8().into_raw(),
-                        )),
+                        // iced::widget::image::viewer(Handle::from_memory(image.to_bytes())),
+                        column![text(path.to_string_lossy()), text(hash.to_base64()),]
                     ]
+                    .spacing(20)
+                    .align_items(iced::Alignment::Center)
                     .into()
                 })
                 .collect::<Vec<_>>(),
         )
         .spacing(20)
         .into();
-        let content = column![title, text_input, button, rows]
-            .spacing(20)
-            .max_width(800);
+        let content = column![title, text_input, button, rows].spacing(20);
 
         scrollable(
             container(content)
