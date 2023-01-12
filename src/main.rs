@@ -17,7 +17,7 @@ const KNOWN_EXTENSIONS: [&'static str; 12] = [
 ];
 
 const MIN_IMAGE_SIZE: usize = 60 * 60;
-const SIMILARITY_THRESHOLD: u32 = 20;
+const SIMILARITY_THRESHOLD: u32 = 25;
 
 #[derive(Debug)]
 struct Ui {
