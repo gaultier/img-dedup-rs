@@ -1,7 +1,7 @@
 use iced::alignment;
 use iced::theme::Theme;
 use iced::widget::image::Handle;
-use iced::widget::{button, column, container, scrollable, text, text_input};
+use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::window;
 use iced::{Application, Element};
 use iced::{Color, Command, Length, Settings};
@@ -54,7 +54,7 @@ impl Application for Ui {
             Ui {
                 state: UiState {
                     root: None,
-                    root_input: String::new(),
+                    root_input: String::from("/Users/pgaultier/Downloads/wallpapers-hd"),
                     images: Vec::new(),
                 },
             },
@@ -163,9 +163,17 @@ impl Application for Ui {
                 .images
                 .iter()
                 .map(|Image { path, hash, image }| {
-                    iced::widget::row![
-                        // iced::widget::image::viewer(Handle::from_memory(image.to_bytes())),
-                        column![text(path.to_string_lossy()), text(hash.to_base64()),]
+                    let rgba_image = image.to_rgba8();
+                    column![
+                        text(path.to_string_lossy()),
+                        text(hash.to_base64()),
+                        iced::widget::image::viewer(Handle::from_pixels(
+                            rgba_image.width(),
+                            rgba_image.height(),
+                            rgba_image.to_vec()
+                        ))
+                        .width(Length::Units(400))
+                        .height(Length::Units(300)),
                     ]
                     .spacing(20)
                     .align_items(iced::Alignment::Center)
@@ -175,6 +183,7 @@ impl Application for Ui {
         )
         .spacing(20)
         .into();
+
         let content = column![title, text_input, button, rows].spacing(20);
 
         scrollable(
@@ -190,7 +199,7 @@ impl Application for Ui {
 fn main() -> iced::Result {
     Ui::run(Settings {
         window: window::Settings {
-            size: (500, 800),
+            size: (800, 1200),
             ..window::Settings::default()
         },
         ..Settings::default()
