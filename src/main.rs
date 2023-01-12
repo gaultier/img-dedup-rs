@@ -1,11 +1,12 @@
 use iced::alignment;
 use iced::theme::Theme;
 use iced::widget::image::Handle;
-use iced::widget::{button, column, container, row, scrollable, text, text_input};
+use iced::widget::{button, column, container, row, scrollable, text, text_input, Column};
 use iced::window;
 use iced::{Application, Element};
 use iced::{Color, Command, Length, Settings};
-use image::{DynamicImage, GenericImageView};
+use image::error::LimitError;
+use image::{DynamicImage, GenericImageView, ImageError};
 use img_hash::HasherConfig;
 use itertools::Itertools;
 use std::path::PathBuf;
@@ -15,6 +16,9 @@ const KNOWN_EXTENSIONS: [&'static str; 12] = [
     "png", "jpg", "jpeg", "gif", "bmp", "ico", "tiff", "webp", "avif", "pnm", "dds", "tga",
 ];
 
+const MIN_IMAGE_SIZE: usize = 60 * 60;
+const SIMILARITY_THRESHOLD: u32 = 20;
+
 #[derive(Debug)]
 struct Ui {
     state: UiState,
@@ -22,7 +26,6 @@ struct Ui {
 
 #[derive(Debug)]
 struct UiState {
-    root: Option<PathBuf>,
     root_input: String,
 
     images: Vec<Image>,
@@ -54,8 +57,9 @@ impl Application for Ui {
         (
             Ui {
                 state: UiState {
-                    root: None,
-                    root_input: String::from("/Users/pgaultier/Downloads/wallpapers-hd"),
+                    root_input: String::from(
+                        "/Users/pgaultier/Pictures/Photos Library.photoslibrary/originals",
+                    ),
                     images: Vec::new(),
                 },
             },
@@ -102,6 +106,14 @@ impl Application for Ui {
                                         return Err(err);
                                     }
                                     let img = img.unwrap();
+
+                                    if (img.width() as usize) * (img.height() as usize)
+                                        < MIN_IMAGE_SIZE
+                                    {
+                                        return Err(ImageError::Limits(LimitError::from_kind(
+                                            image::error::LimitErrorKind::DimensionError,
+                                        )));
+                                    }
 
                                     let hasher = HasherConfig::new()
                                         .hash_size(16, 16)
@@ -159,69 +171,65 @@ impl Application for Ui {
         let button =
             button("Analyze").on_press(UiMessage::RootSelected(self.state.root_input.clone()));
 
-        let mut similar_count = 0usize;
-        let similarity_threshold = 20;
+        let similar_images = self
+            .state
+            .images
+            .iter()
+            .combinations(2)
+            .filter(|x| {
+                let (a, b) = (x[0], x[1]);
+                a.hash.dist(&b.hash) < SIMILARITY_THRESHOLD
+            })
+            .map(|x| {
+                let (a, b) = (x[0], x[1]);
 
-        // for (i, (a_hash, a_path)) in path_hashes.iter().enumerate() {
-        //     for j in 0..i {
-        //         let (b_hash, b_path) = &path_hashes[j];
-        //         assert_ne!(a_path, b_path);
-
-        //         if a_hash.dist(b_hash) <= similarity_threshold {
-        //             println!(
-        //                 "{} and {} might be similar",
-        //                 a_path.display(),
-        //                 b_path.display(),
-        //             );
-        //             similar_count += 1;
-
-        // }
-        // let total = path_hashes.len() * (path_hashes.len() - 1) / 2;
-
-        let rows: Element<_> = column(
-            self.state
-                .images
-                .iter()
-                .combinations(2)
-                .filter(|x| {
-                    let (a, b) = (x[0], x[1]);
-                    a.hash.dist(&b.hash) < similarity_threshold
-                })
-                .map(
-                    |x| {
-                    let (a, b) = (x[0], x[1]);
-
-                        let a_rgba_image = a.image.to_rgba8();
-                        let b_rgba_image = b.image.to_rgba8();
-                        column![
-                            text(a.path.to_string_lossy()),
+                let a_rgba_image = a.image.to_rgba8();
+                let b_rgba_image = b.image.to_rgba8();
+                row![
+                    Column::with_children(vec![
+                        Element::from(text(a.path.to_string_lossy()).width(Length::Shrink)),
+                        Element::from(
                             iced::widget::image::viewer(Handle::from_pixels(
                                 a_rgba_image.width(),
                                 a_rgba_image.height(),
                                 a_rgba_image.to_vec()
                             ))
-                            .width(Length::Units(400))
-                            .height(Length::Units(300)),
-                            text(b.path.to_string_lossy()),
+                            .width(Length::Shrink)
+                            .height(Length::Units(300))
+                        )
+                    ])
+                    .width(Length::Units(620)),
+                    Column::with_children(vec![
+                        Element::from(text(b.path.to_string_lossy()).width(Length::Shrink)),
+                        Element::from(
                             iced::widget::image::viewer(Handle::from_pixels(
                                 b_rgba_image.width(),
                                 b_rgba_image.height(),
                                 b_rgba_image.to_vec()
                             ))
-                            .width(Length::Units(400))
-                            .height(Length::Units(300)),
-                        ]
-                        .spacing(20)
-                        .align_items(iced::Alignment::Center)
-                        .into()
-                    },
-                )
-                .collect::<Vec<_>>(),
-        )
-        .spacing(20)
+                            .width(Length::Shrink)
+                            .height(Length::Units(300))
+                        ),
+                    ])
+                    .width(Length::Units(620)),
+                ]
+                .spacing(20)
+                .align_items(iced::Alignment::Center)
+                .into()
+            })
+            .collect::<Vec<_>>();
+
+        let similar_count = similar_images.len();
+        let rows: Element<_> = column(similar_images).spacing(20).into();
+
+        let message: Element<_> = text(if similar_count == 0 {
+            String::from("No similar images")
+        } else {
+            format!("{} similar images", similar_count)
+        })
         .into();
 
-        let content = column![title, text_input, button, rows].spacing(20);
+        let content = column![title, text_input, button, message, rows,].spacing(20);
 
         scrollable(
             container(content)
@@ -236,7 +244,7 @@ impl Application for Ui {
 fn main() -> iced::Result {
     Ui::run(Settings {
         window: window::Settings {
-            size: (800, 1200),
+            size: (1280, 720),
             ..window::Settings::default()
         },
         ..Settings::default()
