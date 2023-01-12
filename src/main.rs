@@ -7,6 +7,7 @@ use iced::{Application, Element};
 use iced::{Color, Command, Length, Settings};
 use image::{DynamicImage, GenericImageView};
 use img_hash::HasherConfig;
+use itertools::Itertools;
 use std::path::PathBuf;
 use walkdir::WalkDir;
 
@@ -158,27 +159,63 @@ impl Application for Ui {
         let button =
             button("Analyze").on_press(UiMessage::RootSelected(self.state.root_input.clone()));
 
+        let mut similar_count = 0usize;
+        let similarity_threshold = 20;
+
+        // for (i, (a_hash, a_path)) in path_hashes.iter().enumerate() {
+        //     for j in 0..i {
+        //         let (b_hash, b_path) = &path_hashes[j];
+        //         assert_ne!(a_path, b_path);
+
+        //         if a_hash.dist(b_hash) <= similarity_threshold {
+        //             println!(
+        //                 "{} and {} might be similar",
+        //                 a_path.display(),
+        //                 b_path.display(),
+        //             );
+        //             similar_count += 1;
+
+        // }
+        // let total = path_hashes.len() * (path_hashes.len() - 1) / 2;
+
         let rows: Element<_> = column(
             self.state
                 .images
                 .iter()
-                .map(|Image { path, hash, image }| {
-                    let rgba_image = image.to_rgba8();
-                    column![
-                        text(path.to_string_lossy()),
-                        text(hash.to_base64()),
-                        iced::widget::image::viewer(Handle::from_pixels(
-                            rgba_image.width(),
-                            rgba_image.height(),
-                            rgba_image.to_vec()
-                        ))
-                        .width(Length::Units(400))
-                        .height(Length::Units(300)),
-                    ]
-                    .spacing(20)
-                    .align_items(iced::Alignment::Center)
-                    .into()
+                .combinations(2)
+                .filter(|x| {
+                    let (a, b) = (x[0], x[1]);
+                    a.hash.dist(&b.hash) < similarity_threshold
                 })
+                .map(
+                    |x| {
+                    let (a, b) = (x[0], x[1]);
+
+                        let a_rgba_image = a.image.to_rgba8();
+                        let b_rgba_image = b.image.to_rgba8();
+                        column![
+                            text(a.path.to_string_lossy()),
+                            iced::widget::image::viewer(Handle::from_pixels(
+                                a_rgba_image.width(),
+                                a_rgba_image.height(),
+                                a_rgba_image.to_vec()
+                            ))
+                            .width(Length::Units(400))
+                            .height(Length::Units(300)),
+                            text(b.path.to_string_lossy()),
+                            iced::widget::image::viewer(Handle::from_pixels(
+                                b_rgba_image.width(),
+                                b_rgba_image.height(),
+                                b_rgba_image.to_vec()
+                            ))
+                            .width(Length::Units(400))
+                            .height(Length::Units(300)),
+                        ]
+                        .spacing(20)
+                        .align_items(iced::Alignment::Center)
+                        .into()
+                    },
+                )
                 .collect::<Vec<_>>(),
         )
         .spacing(20)
@@ -204,95 +241,4 @@ fn main() -> iced::Result {
         },
         ..Settings::default()
     })
-
-    // let arg1 = std::env::args().nth(1);
-    // let root = arg1
-    //     .as_ref()
-    //     .map(|s| s.as_str())
-    //     .unwrap_or("/Users/pgaultier/Downloads");
-
-    // let hasher = HasherConfig::new()
-    //     .hash_size(16, 16)
-    //     .hash_alg(img_hash::HashAlg::DoubleGradient)
-    //     .to_hasher();
-    // .map(OsStr::new);
-
-    // let mut path_hashes = Vec::with_capacity(100);
-
-    // for entry in WalkDir::new(root) {
-    //     let entry = entry.unwrap();
-    //     if !entry.file_type().is_file() {
-    //         continue;
-    //     }
-    //     let ext = entry.path().extension();
-    //     if ext.is_none() {
-    //         continue;
-    //     }
-    //     let ext = ext.unwrap();
-
-    //     if known_extensions.iter().find(|x| *x == &ext).is_none() {
-    //         continue;
-    //     }
-    //     println!("{}", entry.path().display());
-
-    //     let img = image::open(entry.path());
-    //     if let Err(err) = img {
-    //         eprintln!("Failed to open {:?}: {}", entry.path(), err);
-    //         continue;
-    //     }
-    //     let img = img.unwrap();
-
-    //     let hash = hasher.hash_image(&img);
-
-    //     path_hashes.push((hash, entry.path().to_owned()));
-    // }
-
-    // let mut similar_count = 0usize;
-    // let similarity_threshold = 20;
-    // for (i, (a_hash, a_path)) in path_hashes.iter().enumerate() {
-    //     for j in 0..i {
-    //         let (b_hash, b_path) = &path_hashes[j];
-    //         assert_ne!(a_path, b_path);
-
-    //         if a_hash.dist(b_hash) <= similarity_threshold {
-    //             println!(
-    //                 "{} and {} might be similar",
-    //                 a_path.display(),
-    //                 b_path.display(),
-    //             );
-    //             similar_count += 1;
-
-    //             let cmd = std::process::Command::new("open")
-    //                 .args([a_path, b_path])
-    //                 .stdout(Stdio::null())
-    //                 .stderr(Stdio::null())
-    //                 .spawn();
-    //             if let Err(err) = cmd {
-    //                 eprintln!(
-    //                     "Failed to run open: {} {} {}",
-    //                     err,
-    //                     a_path.display(),
-    //                     b_path.display()
-    //                 );
-    //                 continue;
-    //             }
-    //             if let Err(err) = cmd.unwrap().wait() {
-    //                 eprintln!(
-    //                     "Failed to wait for open: {} {} {}",
-    //                     err,
-    //                     a_path.display(),
-    //                     b_path.display()
-    //                 );
-    //                 continue;
-    //             }
-    //         }
-    //     }
-    // }
-    // let total = path_hashes.len() * (path_hashes.len() - 1) / 2;
-    // println!(
-    //     "Analyzed: {}, similar: {}/{}",
-    //     path_hashes.len(),
-    //     similar_count,
-    //     total
-    // );
 }

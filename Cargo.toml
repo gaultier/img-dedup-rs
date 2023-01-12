@@ -11,3 +11,4 @@ image = "0.23.0"
 img_hash = "3.2.0"
 iced = {version = "0.6", features = ["wgpu", "image", "tokio"]}
 tokio = {version = "1.24.1", features = ["rt-multi-thread"]}
+itertools = "0.10.5"
