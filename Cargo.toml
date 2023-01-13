@@ -7,8 +7,9 @@ edition = "2021"
 
 [dependencies]
 walkdir = "2"
-image = "0.23.0"
+image = "0.23.14"
 img_hash = "3.2.0"
-iced = {version = "0.6", features = ["wgpu", "image", "tokio"]}
-tokio = {version = "1.24.1", features = ["rt-multi-thread"]}
-itertools = "0.10.5"
+iced = {version = "0.6", features = ["wgpu", "image"]}
+rayon = "1.6.1"
+log = "0.4.17"
+env_logger = "0.10.0"

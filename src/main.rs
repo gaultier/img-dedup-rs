@@ -1,15 +1,18 @@
-use iced::alignment;
+use iced::futures::channel::oneshot;
 use iced::theme::Theme;
 use iced::widget::image::Handle;
 use iced::widget::{button, column, container, row, scrollable, text, text_input, Column};
-use iced::window;
+use iced::{alignment, Subscription};
+use iced::{subscription, window};
 use iced::{Application, Element};
 use iced::{Color, Command, Length, Settings};
 use image::error::LimitError;
-use image::{DynamicImage, GenericImageView, ImageError};
+use image::{ImageBuffer, ImageError, Rgba};
 use img_hash::HasherConfig;
-use itertools::Itertools;
+use log::{debug, error, info};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
 use walkdir::WalkDir;
 
 const KNOWN_EXTENSIONS: [&'static str; 12] = [
@@ -19,23 +22,36 @@ const KNOWN_EXTENSIONS: [&'static str; 12] = [
 const MIN_IMAGE_SIZE: usize = 60 * 60;
 const SIMILARITY_THRESHOLD: u32 = 25;
 
-#[derive(Debug)]
 struct Ui {
     state: UiState,
 }
 
-#[derive(Debug)]
 struct UiState {
     root_input: String,
-
+    paths: Vec<PathBuf>,
     images: Vec<Image>,
+    scan_items: Vec<ScanItem>,
+    similar: Vec<(usize, usize)>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ScanItem {
+    id: usize,
+    state: ScanState,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ScanState {
+    Ready,
+    Finished,
 }
 
 #[derive(Debug, Clone)]
 pub struct Image {
-    path: PathBuf,
+    id: usize,
+    path: Arc<PathBuf>,
     hash: img_hash::ImageHash,
-    image: DynamicImage,
+    image: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -59,8 +75,12 @@ impl Application for Ui {
                 state: UiState {
                     root_input: String::from(
                         "/Users/pgaultier/Pictures/Photos Library.photoslibrary/originals",
+                        // "/Users/pgaultier/Downloads/wallpapers-hd",
                     ),
+                    paths: Vec::new(),
                     images: Vec::new(),
+                    scan_items: Vec::new(),
+                    similar: Vec::new(),
                 },
             },
             Command::none(),
@@ -77,7 +97,7 @@ impl Application for Ui {
             UiMessage::RootSelected(root) => {
                 let root = PathBuf::from(root);
 
-                let paths = WalkDir::new(root)
+                self.state.paths = WalkDir::new(root)
                     .into_iter()
                     .filter_map(|e| e.ok())
                     .filter(|e| {
@@ -90,68 +110,40 @@ impl Application for Ui {
                     })
                     .map(|e| e.path().to_owned())
                     .collect::<Vec<_>>();
-                println!("{} paths", paths.len());
 
-                Command::batch(
-                    paths
-                        .iter()
-                        .map(|path| {
-                            let path = path.clone();
-                            Command::perform(
-                                tokio::task::spawn_blocking(move || {
-                                    let img = image::open(&path);
+                self.state.scan_items = self
+                    .state
+                    .paths
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| ScanItem {
+                        id: i,
+                        state: ScanState::Ready,
+                    })
+                    .collect::<Vec<_>>();
 
-                                    if let Err(err) = img {
-                                        eprintln!("Failed to open {:?}: {}", path, err);
-                                        return Err(err);
-                                    }
-                                    let img = img.unwrap();
+                self.state.similar.clear();
 
-                                    if (img.width() as usize) * (img.height() as usize)
-                                        < MIN_IMAGE_SIZE
-                                    {
-                                        return Err(ImageError::Limits(LimitError::from_kind(
-                                            image::error::LimitErrorKind::DimensionError,
-                                        )));
-                                    }
-
-                                    let hasher = HasherConfig::new()
-                                        .hash_size(16, 16)
-                                        .hash_alg(img_hash::HashAlg::DoubleGradient)
-                                        .to_hasher();
-
-                                    let hash = hasher.hash_image(&img);
-
-                                    println!("{} hashed", path.display());
-                                    Ok(Image {
-                                        path,
-                                        hash,
-                                        image: img,
-                                    })
-                                }),
-                                |hash_res| {
-                                    if hash_res.is_err() {
-                                        return UiMessage::Err;
-                                    }
-
-                                    let hash_res = hash_res.unwrap();
-                                    if let Ok(img) = hash_res {
-                                        UiMessage::HashComputed(img)
-                                    } else {
-                                        UiMessage::Err
-                                    }
-                                },
-                            )
-                        })
-                        .into_iter(),
-                )
+                Command::none()
             }
             UiMessage::RootInputChange(content) => {
                 self.state.root_input = content;
                 Command::none()
             }
             UiMessage::HashComputed(image) => {
+                debug!("HashComputed: {} {}", image.id, image.path.display());
+                self.state.scan_items[image.id].state = ScanState::Finished;
+                let j = self.state.images.len();
+
+                for (i, other) in self.state.images.iter().enumerate() {
+                    assert_ne!(image.path, other.path);
+                    if image.hash.dist(&other.hash) < SIMILARITY_THRESHOLD {
+                        self.state.similar.push((i, j));
+                    }
+                }
+
                 self.state.images.push(image);
+
                 Command::none()
             }
             UiMessage::SimilarityFound(_a, _b) => Command::none(),
@@ -171,45 +163,38 @@ impl Application for Ui {
         let button =
             button("Analyze").on_press(UiMessage::RootSelected(self.state.root_input.clone()));
 
-        let similar_images = self
+        let similar = self
             .state
-            .images
+            .similar
             .iter()
-            .combinations(2)
-            .filter(|x| {
-                let (a, b) = (x[0], x[1]);
-                a.hash.dist(&b.hash) < SIMILARITY_THRESHOLD
-            })
-            .map(|x| {
-                let (a, b) = (x[0], x[1]);
+            .map(|(i, j)| {
+                let (a, b) = (&self.state.images[*i], &self.state.images[*j]);
 
-                let a_rgba_image = a.image.to_rgba8();
-                let b_rgba_image = b.image.to_rgba8();
                 row![
                     Column::with_children(vec![
                         Element::from(text(a.path.to_string_lossy()).width(Length::Shrink)),
-                        Element::from(
-                            iced::widget::image::viewer(Handle::from_pixels(
-                                a_rgba_image.width(),
-                                a_rgba_image.height(),
-                                a_rgba_image.to_vec()
-                            ))
-                            .width(Length::Shrink)
-                            .height(Length::Units(300))
-                        )
+                        // Element::from(
+                        //     iced::widget::image::viewer(Handle::from_pixels(
+                        //         a.image.width(),
+                        //         a.image.height(),
+                        //         a.image.to_vec()
+                        //     ))
+                        //     .width(Length::Shrink)
+                        //     .height(Length::Units(300))
+                        // )
                     ])
                     .width(Length::Units(620)),
                     Column::with_children(vec![
                         Element::from(text(b.path.to_string_lossy()).width(Length::Shrink)),
-                        Element::from(
-                            iced::widget::image::viewer(Handle::from_pixels(
-                                b_rgba_image.width(),
-                                b_rgba_image.height(),
-                                b_rgba_image.to_vec()
-                            ))
-                            .width(Length::Shrink)
-                            .height(Length::Units(300))
-                        ),
+                        // Element::from(
+                        //     iced::widget::image::viewer(Handle::from_pixels(
+                        //         b.image.width(),
+                        //         b.image.height(),
+                        //         b.image.to_vec()
+                        //     ))
+                        //     .width(Length::Shrink)
+                        //     .height(Length::Units(300))
+                        // ),
                     ])
                     .width(Length::Units(620)),
                 ]
@@ -219,8 +204,8 @@ impl Application for Ui {
             })
             .collect::<Vec<_>>();
 
-        let similar_count = similar_images.len();
-        let rows: Element<_> = column(similar_images).spacing(20).into();
+        let similar_count = similar.len();
+        let rows: Element<_> = column(similar).spacing(20).into();
 
         let message: Element<_> = text(if similar_count == 0 {
             String::from("No similar images")
@@ -239,9 +224,97 @@ impl Application for Ui {
         )
         .into()
     }
+
+    fn subscription(&self) -> iced::Subscription<Self::Message> {
+        let paths = self
+            .state
+            .paths
+            .iter()
+            .map(|p| Arc::new(p.to_path_buf()))
+            .collect::<Vec<Arc<PathBuf>>>();
+
+        let count = Arc::new(AtomicU64::new(0));
+        Subscription::batch(self.state.scan_items.iter().map(|ScanItem { id, .. }| {
+            let p = paths[*id].clone();
+            let c = count.clone();
+            let id: usize = *id;
+            subscription::unfold(id, ScanState::Ready, move |state| {
+                hash_image(
+                    id,
+                    p.clone(),
+                    state,
+                    c.fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+                )
+            })
+            .map(|res| match res {
+                Ok(image) => UiMessage::HashComputed(image),
+                Err(_err) => UiMessage::Err, // FIXME
+            })
+        }))
+    }
+}
+
+async fn hash_image(
+    id: usize,
+    path: Arc<PathBuf>,
+    scan_state: ScanState,
+    count: u64,
+) -> (Option<Result<Image, ImageError>>, ScanState) {
+    match scan_state {
+        ScanState::Ready => {
+            let (sender, receiver) = oneshot::channel::<Result<Image, ImageError>>();
+            rayon::spawn(move || {
+                info!("Hashing {} {}", path.display(), count);
+                let img = image::io::Reader::open(path.as_path());
+
+                if let Err(err) = img {
+                    error!("Failed to open {:?}: {}", path, err);
+                    sender.send(Err(ImageError::IoError(err)));
+                    return;
+                }
+                let img = match img.unwrap().decode() {
+                    Ok(img) => img.to_rgba8(),
+                    Err(err) => {
+                        error!("Failed to decode {:?}: {}", path, err);
+                        sender.send(Err(err));
+                        return;
+                    }
+                };
+                info!("Decoded {} {}", path.display(), count);
+
+                if (img.width() as usize) * (img.height() as usize) < MIN_IMAGE_SIZE {
+                    sender.send(Err(ImageError::Limits(LimitError::from_kind(
+                        image::error::LimitErrorKind::DimensionError,
+                    ))));
+                    return;
+                }
+
+                let hasher = HasherConfig::new()
+                    .hash_size(16, 16)
+                    .hash_alg(img_hash::HashAlg::DoubleGradient)
+                    .to_hasher();
+
+                let hash = hasher.hash_image(&img);
+
+                debug!("{} hashed", path.display());
+                sender.send(Ok(Image {
+                    id,
+                    path,
+                    hash,
+                    image: img.to_vec(),
+                }));
+            });
+
+            let res = receiver.await.unwrap();
+            (Some(res), ScanState::Finished)
+        }
+        ScanState::Finished => iced::futures::future::pending().await,
+    }
 }
 
 fn main() -> iced::Result {
+    env_logger::init();
+
     Ui::run(Settings {
         window: window::Settings {
             size: (1280, 720),
