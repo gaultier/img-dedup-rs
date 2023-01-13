@@ -6,7 +6,7 @@ use iced::{alignment, Subscription};
 use iced::{subscription, window};
 use iced::{Application, Element};
 use iced::{Color, Command, Length, Settings};
-use image::error::LimitError;
+use image::error::{LimitError, LimitErrorKind};
 use image::{ImageBuffer, ImageError, Rgba};
 use img_hash::HasherConfig;
 use log::{debug, error, info};
@@ -51,7 +51,7 @@ pub struct Image {
     id: usize,
     path: Arc<PathBuf>,
     hash: img_hash::ImageHash,
-    image: Vec<u8>,
+    image: ImageBuffer<Rgba<u8>, Vec<u8>>,
 }
 
 #[derive(Debug, Clone)]
@@ -173,28 +173,28 @@ impl Application for Ui {
                 row![
                     Column::with_children(vec![
                         Element::from(text(a.path.to_string_lossy()).width(Length::Shrink)),
-                        // Element::from(
-                        //     iced::widget::image::viewer(Handle::from_pixels(
-                        //         a.image.width(),
-                        //         a.image.height(),
-                        //         a.image.to_vec()
-                        //     ))
-                        //     .width(Length::Shrink)
-                        //     .height(Length::Units(300))
-                        // )
+                        Element::from(
+                            iced::widget::image::viewer(Handle::from_pixels(
+                                a.image.width(),
+                                a.image.height(),
+                                a.image.to_vec()
+                            ))
+                            .width(Length::Shrink)
+                            .height(Length::Units(300))
+                        )
                     ])
                     .width(Length::Units(620)),
                     Column::with_children(vec![
                         Element::from(text(b.path.to_string_lossy()).width(Length::Shrink)),
-                        // Element::from(
-                        //     iced::widget::image::viewer(Handle::from_pixels(
-                        //         b.image.width(),
-                        //         b.image.height(),
-                        //         b.image.to_vec()
-                        //     ))
-                        //     .width(Length::Shrink)
-                        //     .height(Length::Units(300))
-                        // ),
+                        Element::from(
+                            iced::widget::image::viewer(Handle::from_pixels(
+                                b.image.width(),
+                                b.image.height(),
+                                b.image.to_vec()
+                            ))
+                            .width(Length::Shrink)
+                            .height(Length::Units(300))
+                        ),
                     ])
                     .width(Length::Units(620)),
                 ]
@@ -265,26 +265,19 @@ async fn hash_image(
             let (sender, receiver) = oneshot::channel::<Result<Image, ImageError>>();
             rayon::spawn(move || {
                 info!("Hashing {} {}", path.display(), count);
-                let img = image::io::Reader::open(path.as_path());
+                let image = image::open(path.as_path());
 
-                if let Err(err) = img {
-                    error!("Failed to open {:?}: {}", path, err);
-                    sender.send(Err(ImageError::IoError(err)));
-                    return;
-                }
-                let img = match img.unwrap().decode() {
-                    Ok(img) => img.to_rgba8(),
+                let image = match image {
                     Err(err) => {
-                        error!("Failed to decode {:?}: {}", path, err);
+                        error!("Failed to open {:?}: {}", path, err);
                         sender.send(Err(err));
                         return;
                     }
+                    Ok(img) => img.to_rgba8(),
                 };
-                info!("Decoded {} {}", path.display(), count);
-
-                if (img.width() as usize) * (img.height() as usize) < MIN_IMAGE_SIZE {
+                if (image.width() as usize) * (image.height() as usize) < MIN_IMAGE_SIZE {
                     sender.send(Err(ImageError::Limits(LimitError::from_kind(
-                        image::error::LimitErrorKind::DimensionError,
+                        LimitErrorKind::DimensionError,
                     ))));
                     return;
                 }
@@ -294,14 +287,14 @@ async fn hash_image(
                     .hash_alg(img_hash::HashAlg::DoubleGradient)
                     .to_hasher();
 
-                let hash = hasher.hash_image(&img);
+                let hash = hasher.hash_image(&image);
 
                 debug!("{} hashed", path.display());
                 sender.send(Ok(Image {
                     id,
                     path,
                     hash,
-                    image: img.to_vec(),
+                    image,
                 }));
             });
 
