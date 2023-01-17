@@ -1,8 +1,9 @@
-// use image::error::{LimitError, LimitErrorKind};
-// use image::ImageError;
+use image::error::{LimitError, LimitErrorKind};
+use image::ImageError;
 use img_hash::HasherConfig;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use std::path::PathBuf;
+use std::sync::mpsc::TryRecvError;
 use walkdir::WalkDir;
 
 use eframe::egui;
@@ -13,11 +14,6 @@ const KNOWN_EXTENSIONS: [&'static str; 12] = [
 
 const MIN_IMAGE_SIZE: usize = 60 * 60;
 const SIMILARITY_THRESHOLD: u32 = 25;
-
-enum ScanState {
-    NotStarted,
-    FoundPaths(usize),
-}
 
 pub struct Image {
     path: PathBuf,
@@ -30,9 +26,10 @@ struct MyApp {
     // images: Vec<Result<Image, ImageError>>,
     images: Vec<Image>,
     similar_images: Vec<(usize, usize)>,
-    images_receiver: std::sync::mpsc::Receiver<Image>,
-    images_sender: std::sync::mpsc::Sender<Image>,
-    scan_state: ScanState,
+    images_receiver: std::sync::mpsc::Receiver<Result<Image, (PathBuf, ImageError)>>,
+    images_sender: std::sync::mpsc::Sender<Result<Image, (PathBuf, ImageError)>>,
+    found_paths: Option<usize>,
+    errors: Vec<(PathBuf, String)>,
 }
 impl MyApp {
     fn new() -> Self {
@@ -43,7 +40,8 @@ impl MyApp {
             images_sender: sender,
             similar_images: Vec::new(),
             images: Vec::new(),
-            scan_state: ScanState::NotStarted,
+            found_paths: None,
+            errors: Vec::new(),
         }
     }
 }
@@ -79,6 +77,7 @@ impl eframe::App for MyApp {
                                 let image = match image {
                                     Err(err) => {
                                         error!("Failed to open {:?}: {}", path, err);
+                                        let _ = sender.send(Err((path, err)));
                                         return;
                                     }
                                     Ok(img) => img
@@ -87,9 +86,12 @@ impl eframe::App for MyApp {
                                 };
                                 let (width, height) = image.dimensions();
                                 if (width as usize) * (height as usize) < MIN_IMAGE_SIZE {
-                                    // return Err(ImageError::Limits(LimitError::from_kind(
-                                    //     LimitErrorKind::DimensionError,
-                                    // )));
+                                    let _ = sender.send(Err((
+                                        path,
+                                        ImageError::Limits(LimitError::from_kind(
+                                            LimitErrorKind::DimensionError,
+                                        )),
+                                    )));
                                     return;
                                 }
 
@@ -111,28 +113,25 @@ impl eframe::App for MyApp {
                                     Default::default(),
                                 );
 
-                                let _ = sender.send(Image {
+                                let _ = sender.send(Ok(Image {
                                     hash,
                                     path,
                                     texture,
-                                });
+                                }));
                                 ctx.request_repaint();
                             });
                         });
-                    self.scan_state = ScanState::FoundPaths(paths_count);
+                    self.found_paths = Some(paths_count);
                 }
             }
 
-            match self.scan_state {
-                ScanState::NotStarted => {}
-                ScanState::FoundPaths(total) => {
-                    let scanned = self.images.len();
-                    let similar = self.similar_images.len();
+            if let Some(total) = self.found_paths {
+                let scanned = self.images.len() + self.errors.len();
+                let similar = self.similar_images.len();
 
-                    ui.label(format!("Analyzed {}/{}", scanned, total));
-                    ui.add(egui::ProgressBar::new(scanned as f32 / total as f32));
-                    ui.label(format!("Similar: {}/{}", similar, total));
-                }
+                ui.label(format!("Analyzed {}/{}", scanned, total));
+                ui.add(egui::ProgressBar::new(scanned as f32 / total as f32).show_percentage());
+                ui.label(format!("Similar: {}/{}", similar, total));
             }
 
             if let Some(picked_path) = &self.picked_path {
@@ -142,8 +141,18 @@ impl eframe::App for MyApp {
                 });
 
                 match self.images_receiver.try_recv() {
-                    Err(err) => warn!("Failed to receive image: {}", err),
-                    Ok(image) => {
+                    Err(TryRecvError::Empty) => {}
+                    Err(err) => {
+                        ui.label(format!(
+                            "Internal error, failed to receive the image: {}",
+                            err
+                        ));
+                    }
+                    Ok(Err((path, err))) => {
+                        ui.label(format!("Error: {} {}", path.display(), err));
+                        self.errors.push((path, err.to_string()));
+                    }
+                    Ok(Ok(image)) => {
                         let j = self.images.len();
 
                         for (i, other) in self.images.iter().enumerate() {
@@ -173,7 +182,14 @@ impl eframe::App for MyApp {
                             });
                         }
                     }
+
+                ui.collapsing(format!("Errors ({})", self.errors.len()), |ui| {
+                    for (path, err) in &self.errors {
+                        ui.label(format!("{} {}", path.display(), err));
+                    }
                 });
+                });
+
             }
         });
     }
