@@ -2,6 +2,7 @@ use image::error::{LimitError, LimitErrorKind};
 use image::ImageError;
 use img_hash::HasherConfig;
 use log::{debug, error, info};
+use rayon::ThreadPoolBuilder;
 use std::path::PathBuf;
 use std::sync::mpsc::TryRecvError;
 use walkdir::WalkDir;
@@ -30,7 +31,9 @@ struct MyApp {
     images_sender: std::sync::mpsc::Sender<Result<Image, (PathBuf, ImageError)>>,
     found_paths: Option<usize>,
     errors: Vec<(PathBuf, String)>,
+    pool: rayon::ThreadPool,
 }
+
 impl MyApp {
     fn new() -> Self {
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -42,6 +45,10 @@ impl MyApp {
             images: Vec::new(),
             found_paths: None,
             errors: Vec::new(),
+            pool: ThreadPoolBuilder::new()
+                .num_threads(rayon::current_num_threads() - 1)
+                .build()
+                .unwrap(),
         }
     }
 }
@@ -70,7 +77,7 @@ impl eframe::App for MyApp {
                             paths_count += 1;
                             let ctx = ctx.clone();
                             let sender = self.images_sender.clone();
-                            rayon::spawn(move || {
+                            self.pool.spawn(move || {
                                 info!("Hashing {}", path.display());
                                 let image = image::open(path.as_path());
 
@@ -183,13 +190,12 @@ impl eframe::App for MyApp {
                         }
                     }
 
-                ui.collapsing(format!("Errors ({})", self.errors.len()), |ui| {
-                    for (path, err) in &self.errors {
-                        ui.label(format!("{} {}", path.display(), err));
-                    }
+                    ui.collapsing(format!("Errors ({})", self.errors.len()), |ui| {
+                        for (path, err) in &self.errors {
+                            ui.label(format!("{} {}", path.display(), err));
+                        }
+                    });
                 });
-                });
-
             }
         });
     }
