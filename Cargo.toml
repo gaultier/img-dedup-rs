@@ -6,12 +6,16 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+# Scan directory
 walkdir = "2"
+# Image hashing
 image = "0.23.14"
 img_hash = "3.2.0"
 rayon = "1.6.1"
+# Logs
 log = "0.4.17"
 env_logger = "0.10.0"
+# Ui
 egui = "0.20.1"
 eframe = "0.20.1"
 # Pick File Dialog
