@@ -27,7 +27,7 @@ pub struct Image {
 }
 
 enum Message {
-    AddImage(usize, Result<Image, (PathBuf, ImageError)>),
+    AddImage(ByteUnit, Result<Image, (PathBuf, ImageError)>),
     RemoveImage(usize),
 }
 
@@ -69,7 +69,10 @@ fn analyze_image(path: PathBuf, sender: std::sync::mpsc::Sender<Message>, ctx: e
     let buffer = match std::fs::read(&path) {
         Err(err) => {
             error!("Failed to open {:?}: {}", path, err);
-            let _ = sender.send(Message::AddImage(0, Err((path, ImageError::IoError(err)))));
+            let _ = sender.send(Message::AddImage(
+                0.bytes(),
+                Err((path, ImageError::IoError(err))),
+            ));
             return;
         }
         Ok(buffer) => buffer,
@@ -77,7 +80,7 @@ fn analyze_image(path: PathBuf, sender: std::sync::mpsc::Sender<Message>, ctx: e
     let image = match image::load_from_memory(&buffer) {
         Err(err) => {
             error!("Failed to decode image {:?}: {}", path, err);
-            let _ = sender.send(Message::AddImage(buffer.len(), Err((path, err))));
+            let _ = sender.send(Message::AddImage(buffer.len().bytes(), Err((path, err))));
             return;
         }
         Ok(img) => img
@@ -87,7 +90,7 @@ fn analyze_image(path: PathBuf, sender: std::sync::mpsc::Sender<Message>, ctx: e
     let (width, height) = image.dimensions();
     if (width as usize) * (height as usize) < MIN_IMAGE_SIZE {
         let _ = sender.send(Message::AddImage(
-            buffer.len(),
+            buffer.len().bytes(),
             Err((
                 path,
                 ImageError::Limits(LimitError::from_kind(LimitErrorKind::DimensionError)),
@@ -112,7 +115,7 @@ fn analyze_image(path: PathBuf, sender: std::sync::mpsc::Sender<Message>, ctx: e
     );
 
     let _ = sender.send(Message::AddImage(
-        buffer.len(),
+        buffer.len().bytes(),
         Ok(Image {
             hash,
             path,
@@ -165,6 +168,14 @@ impl eframe::App for MyApp {
                 ));
                 ui.add(egui::ProgressBar::new(scanned as f32 / total as f32).show_percentage());
                 ui.label(format!("Similar: {}/{}", similar, total * (total - 1) / 2));
+            }
+
+            if !self.errors.is_empty() {
+                ui.collapsing(format!("Errors ({})", self.errors.len()), |ui| {
+                    for (path, err) in &self.errors {
+                        ui.label(format!("{} {}", path.display(), err));
+                    }
+                });
             }
 
             if let Some(picked_path) = &self.picked_path {
@@ -277,14 +288,6 @@ impl eframe::App for MyApp {
                             }
                         });
                         egui::Separator::default().spacing(50.0).ui(ui);
-                    }
-
-                    if !self.errors.is_empty() {
-                        ui.collapsing(format!("Errors ({})", self.errors.len()), |ui| {
-                            for (path, err) in &self.errors {
-                                ui.label(format!("{} {}", path.display(), err));
-                            }
-                        });
                     }
                 });
             }
