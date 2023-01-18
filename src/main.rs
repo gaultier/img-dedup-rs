@@ -1,5 +1,6 @@
 use clipboard::ClipboardContext;
 use clipboard::ClipboardProvider;
+use egui::Button;
 use egui::{Color32, Widget};
 use image::error::{LimitError, LimitErrorKind};
 use image::ImageError;
@@ -128,7 +129,11 @@ fn analyze_image(path: PathBuf, sender: std::sync::mpsc::Sender<Message>, ctx: e
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            if ui.button("Open directory…").clicked() {
+            if Button::new("Open directory…")
+                .min_size(egui::Vec2 { x: 150.0, y: 50.0 })
+                .ui(ui)
+                .clicked()
+            {
                 if let Some(path) = rfd::FileDialog::new().pick_folder() {
                     self.picked_path = Some(path.display().to_string());
                     self.images.clear();
@@ -202,6 +207,7 @@ impl eframe::App for MyApp {
 
                         for (i, other) in self.images.iter().enumerate() {
                             if other.hash.dist(&image.hash) < SIMILARITY_THRESHOLD {
+                                // FIXME
                                 self.similar_images.push((i, j));
                             }
                         }
@@ -218,6 +224,7 @@ impl eframe::App for MyApp {
                         );
 
                         self.images.remove(index);
+                        // FIXME
                         self.similar_images = self
                             .similar_images
                             .iter()
