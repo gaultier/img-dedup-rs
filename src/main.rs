@@ -59,11 +59,17 @@ fn analyze_image(
     ctx: egui::Context,
 ) {
     info!("Hashing {}", path.display());
-    let image = image::open(path.as_path());
-
-    let image = match image {
+    let buffer = match std::fs::read(&path) {
         Err(err) => {
             error!("Failed to open {:?}: {}", path, err);
+            let _ = sender.send(Err((path, ImageError::IoError(err))));
+            return;
+        }
+        Ok(buffer) => buffer,
+    };
+    let image = match image::load_from_memory(&buffer) {
+        Err(err) => {
+            error!("Failed to decode image {:?}: {}", path, err);
             let _ = sender.send(Err((path, err)));
             return;
         }
