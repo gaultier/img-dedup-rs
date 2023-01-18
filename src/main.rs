@@ -9,6 +9,7 @@ use log::{debug, error, info};
 use std::path::PathBuf;
 use std::sync::mpsc::TryRecvError;
 use ubyte::{ByteUnit, ToByteUnit};
+use walkdir::DirEntry;
 use walkdir::WalkDir;
 
 use eframe::egui;
@@ -17,7 +18,7 @@ const KNOWN_EXTENSIONS: [&str; 12] = [
     "png", "jpg", "jpeg", "gif", "bmp", "ico", "tiff", "webp", "avif", "pnm", "dds", "tga",
 ];
 
-const MIN_IMAGE_SIZE: usize = 60 * 60;
+const MIN_IMAGE_SIZE: u64 = 60 * 60;
 const SIMILARITY_THRESHOLD: u32 = 25;
 
 #[derive(Clone)]
@@ -83,30 +84,45 @@ fn analyze(sender: std::sync::mpsc::Sender<Message>, path: PathBuf, ctx: egui::C
                     .iter()
                     .any(|x| x == &e.path().extension().unwrap())
         })
-        .map(|e| e.path().to_owned())
-        .for_each(|path| {
+        .for_each(|entry| {
             paths_count += 1;
             id += 1;
             let ctx = ctx.clone();
             let sender = sender.clone();
-            rayon::spawn(move || analyze_image(path, sender, ctx, id));
+            rayon::spawn(move || analyze_image(entry, sender, ctx, id));
         });
     let _ = sender.send(Message::WalkDirFinished(paths_count));
 }
 
 fn analyze_image(
-    path: PathBuf,
+    entry: DirEntry,
     sender: std::sync::mpsc::Sender<Message>,
     ctx: egui::Context,
     id: usize,
 ) {
+    let path = entry.path();
+
+    match entry.metadata() {
+        Ok(metadata) if metadata.len() < MIN_IMAGE_SIZE => {
+            let _ = sender.send(Message::AddImage(
+                metadata.len().bytes(),
+                Err((
+                    path.to_owned(),
+                    ImageError::Limits(LimitError::from_kind(LimitErrorKind::DimensionError)),
+                )),
+            ));
+            return;
+        }
+        _ => {}
+    }
+
     info!("Hashing {}", path.display());
     let buffer = match std::fs::read(&path) {
         Err(err) => {
             error!("Failed to open {:?}: {}", path, err);
             let _ = sender.send(Message::AddImage(
                 0.bytes(),
-                Err((path, ImageError::IoError(err))),
+                Err((path.to_owned(), ImageError::IoError(err))),
             ));
             return;
         }
@@ -115,24 +131,16 @@ fn analyze_image(
     let image = match image::load_from_memory(&buffer) {
         Err(err) => {
             error!("Failed to decode image {:?}: {}", path, err);
-            let _ = sender.send(Message::AddImage(buffer.len().bytes(), Err((path, err))));
+            let _ = sender.send(Message::AddImage(
+                buffer.len().bytes(),
+                Err((path.to_owned(), err)),
+            ));
             return;
         }
         Ok(img) => img
             .resize(800, 600, img_hash::FilterType::Nearest)
             .to_rgba8(),
     };
-    let (width, height) = image.dimensions();
-    if (width as usize) * (height as usize) < MIN_IMAGE_SIZE {
-        let _ = sender.send(Message::AddImage(
-            buffer.len().bytes(),
-            Err((
-                path,
-                ImageError::Limits(LimitError::from_kind(LimitErrorKind::DimensionError)),
-            )),
-        ));
-        return;
-    }
 
     let hasher = HasherConfig::new()
         .hash_size(16, 16)
@@ -143,6 +151,7 @@ fn analyze_image(
 
     debug!("{} hashed", path.display());
 
+    let (width, height) = image.dimensions();
     let texture = ctx.load_texture(
         path.to_string_lossy(),
         egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], &image),
@@ -153,7 +162,7 @@ fn analyze_image(
         buffer.len().bytes(),
         Ok(Image {
             hash,
-            path,
+            path: path.to_owned(),
             texture,
             id,
         }),
