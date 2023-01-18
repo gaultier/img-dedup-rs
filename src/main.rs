@@ -119,6 +119,9 @@ impl eframe::App for MyApp {
             if ui.button("Open directory…").clicked() {
                 if let Some(path) = rfd::FileDialog::new().pick_folder() {
                     self.picked_path = Some(path.display().to_string());
+                    self.images.clear();
+                    self.similar_images.clear();
+                    self.errors.clear();
 
                     let mut paths_count = 0usize;
                     WalkDir::new(path)
@@ -148,7 +151,7 @@ impl eframe::App for MyApp {
 
                 ui.label(format!("Analyzed {}/{}", scanned, total));
                 ui.add(egui::ProgressBar::new(scanned as f32 / total as f32).show_percentage());
-                ui.label(format!("Similar: {}/{}", similar, total));
+                ui.label(format!("Similar: {}/{}", similar, total * (total - 1) / 2));
             }
 
             if let Some(picked_path) = &self.picked_path {
@@ -230,7 +233,10 @@ impl eframe::App for MyApp {
                                     });
 
                                     ui.image(&img.texture, img.texture.size_vec2());
-                                    if egui::Button::new("🗑 Move to trash").fill(Color32::RED).ui(ui).clicked()
+                                    if egui::Button::new("🗑 Move to trash")
+                                        .fill(Color32::RED)
+                                        .ui(ui)
+                                        .clicked()
                                     {
                                         info!("Moving {} to trash", img.path.display());
                                         match trash::delete(&img.path) {
