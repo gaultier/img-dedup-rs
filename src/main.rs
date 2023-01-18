@@ -30,6 +30,7 @@ pub struct Image {
 }
 
 enum Message {
+    WalkDirFinished(usize),
     AddImage(ByteUnit, Result<Image, (PathBuf, ImageError)>),
     RemoveImage(usize),
 }
@@ -59,44 +60,44 @@ impl MyApp {
             found_paths: None,
             errors: Vec::new(),
             pool: ThreadPoolBuilder::new()
-                .num_threads(rayon::current_num_threads() - 1)
+                .num_threads(rayon::current_num_threads() - 2)
                 .build()
                 .unwrap(),
             analyzed_bytes: 0.bytes(),
         }
     }
 
-    fn analyze(&mut self, path: PathBuf, ctx: &egui::Context) {
+    fn prep_for_analyze(&mut self, path: PathBuf) {
         self.picked_path = Some(path.to_string_lossy().to_string());
-
         self.images.clear();
         self.similar_images.clear();
         self.errors.clear();
         self.analyzed_bytes = 0.bytes();
-
-        let mut paths_count = 0usize;
-        let mut id = 0usize;
-        WalkDir::new(path)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_type().is_file()
-                    && e.path().extension().is_some()
-                    && KNOWN_EXTENSIONS
-                        .iter()
-                        .any(|x| x == &e.path().extension().unwrap())
-            })
-            .map(|e| e.path().to_owned())
-            .for_each(|path| {
-                paths_count += 1;
-                id += 1;
-                let ctx = ctx.clone();
-                let sender = self.images_sender.clone();
-                self.pool
-                    .spawn(move || analyze_image(path, sender, ctx, id));
-            });
-        self.found_paths = Some(paths_count);
     }
+}
+
+fn analyze(sender: std::sync::mpsc::Sender<Message>, path: PathBuf, ctx: egui::Context) {
+    let mut paths_count = 0usize;
+    let mut id = 0usize;
+    WalkDir::new(path)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_type().is_file()
+                && e.path().extension().is_some()
+                && KNOWN_EXTENSIONS
+                    .iter()
+                    .any(|x| x == &e.path().extension().unwrap())
+        })
+        .map(|e| e.path().to_owned())
+        .for_each(|path| {
+            paths_count += 1;
+            id += 1;
+            let ctx = ctx.clone();
+            let sender = sender.clone();
+            rayon::spawn(move || analyze_image(path, sender, ctx, id));
+        });
+    let _ = sender.send(Message::WalkDirFinished(paths_count));
 }
 
 fn analyze_image(
@@ -175,20 +176,29 @@ impl eframe::App for MyApp {
                 .clicked()
             {
                 if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                    self.analyze(path, ctx);
+                    self.prep_for_analyze(path.clone());
+                    let ctx = ctx.clone();
+                    let sender = self.images_sender.clone();
+                    let path = path.clone();
+                    self.pool.spawn(move || analyze(sender, path, ctx));
                 }
             }
 
+            let scanned = self.images.len() + self.errors.len();
+            let similar = self.similar_images.len();
             if let Some(total) = self.found_paths {
-                let scanned = self.images.len() + self.errors.len();
-                let similar = self.similar_images.len();
-
                 ui.label(format!(
                     "Analyzed {}/{} ({:.2})",
                     scanned, total, self.analyzed_bytes
                 ));
                 ui.add(egui::ProgressBar::new(scanned as f32 / total as f32).show_percentage());
                 ui.label(format!("Similar: {}/{}", similar, total * (total - 1) / 2));
+            } else {
+                ui.label(format!(
+                    "Analyzed {}/? ({:.2})",
+                    scanned, self.analyzed_bytes
+                ));
+                ui.label(format!("Similar: {}/?", similar));
             }
 
             if !self.errors.is_empty() {
@@ -208,10 +218,10 @@ impl eframe::App for MyApp {
                 match self.images_receiver.try_recv() {
                     Err(TryRecvError::Empty) => {}
                     Err(err) => {
-                        ui.label(format!(
-                            "Internal error, failed to receive the image: {}",
-                            err
-                        ));
+                        todo!();
+                                           }
+                    Ok(Message::WalkDirFinished(paths_count)) => {
+                        self.found_paths = Some(paths_count);
                     }
                     Ok(Message::AddImage(byte_count, Err((path, err)))) => {
                         ui.label(format!("Error: {} {}", path.display(), err));
