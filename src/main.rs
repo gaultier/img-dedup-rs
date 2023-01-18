@@ -2,6 +2,7 @@ use clipboard::ClipboardContext;
 use clipboard::ClipboardProvider;
 use egui::Button;
 use egui::Slider;
+use egui::Vec2;
 use egui::{Color32, Widget};
 use image::error::{LimitError, LimitErrorKind};
 use image::ImageError;
@@ -23,7 +24,7 @@ const MIN_IMAGE_SIZE: u64 = 10 * 1024; // 10 KiB
 
 #[derive(Clone)]
 pub struct Image {
-    path: PathBuf,
+    path: String,
     hash: img_hash::ImageHash,
     texture: egui::TextureHandle,
     id: usize,
@@ -31,7 +32,7 @@ pub struct Image {
 
 enum Message {
     WalkDirFinished(usize),
-    AddImage(ByteUnit, Result<Image, (PathBuf, ImageError)>),
+    AddImage(ByteUnit, Result<Image, (String, ImageError)>),
     RemoveImage(usize),
 }
 
@@ -42,7 +43,7 @@ struct MyApp {
     images_receiver: std::sync::mpsc::Receiver<Message>,
     images_sender: std::sync::mpsc::Sender<Message>,
     found_paths: Option<usize>,
-    errors: Vec<(PathBuf, String)>,
+    errors: Vec<(String, String)>,
     analyzed_bytes: ByteUnit,
     similarity_threshold: u32,
 }
@@ -108,7 +109,7 @@ fn analyze_image(
             let _ = sender.send(Message::AddImage(
                 metadata.len().bytes(),
                 Err((
-                    path.to_owned(),
+                    path.to_string_lossy().to_string(),
                     ImageError::Limits(LimitError::from_kind(LimitErrorKind::DimensionError)),
                 )),
             ));
@@ -123,7 +124,7 @@ fn analyze_image(
             error!("Failed to open {:?}: {}", path, err);
             let _ = sender.send(Message::AddImage(
                 0.bytes(),
-                Err((path.to_owned(), ImageError::IoError(err))),
+                Err((path.to_string_lossy().to_string(), ImageError::IoError(err))),
             ));
             return;
         }
@@ -134,12 +135,12 @@ fn analyze_image(
             error!("Failed to decode image {:?}: {}", path, err);
             let _ = sender.send(Message::AddImage(
                 buffer.len().bytes(),
-                Err((path.to_owned(), err)),
+                Err((path.to_string_lossy().to_string(), err)),
             ));
             return;
         }
         Ok(img) => img
-            .resize(800, 600, img_hash::FilterType::Nearest)
+            .resize(1600, 1200, img_hash::FilterType::Lanczos3)
             .to_rgba8(),
     };
 
@@ -163,7 +164,7 @@ fn analyze_image(
         buffer.len().bytes(),
         Ok(Image {
             hash,
-            path: path.to_owned(),
+            path: path.to_string_lossy().to_string(),
             texture,
             id,
         }),
@@ -210,7 +211,7 @@ impl eframe::App for MyApp {
             if !self.errors.is_empty() {
                 ui.collapsing(format!("Errors ({})", self.errors.len()), |ui| {
                     for (path, err) in &self.errors {
-                        ui.label(format!("{} {}", path.display(), err));
+                        ui.label(format!("{} {}", path, err));
                     }
                 });
             }
@@ -230,7 +231,7 @@ impl eframe::App for MyApp {
                         self.found_paths = Some(paths_count);
                     }
                     Ok(Message::AddImage(byte_count, Err((path, err)))) => {
-                        ui.label(format!("Error: {} {}", path.display(), err));
+                        ui.label(format!("Error: {} {}", path, err));
                         self.errors.push((path, err.to_string()));
                         self.analyzed_bytes += byte_count;
                     }
@@ -292,24 +293,22 @@ impl eframe::App for MyApp {
                             for img in [a, b] {
                                 ui.vertical(|ui| {
                                     ui.horizontal(|ui| {
-                                        ui.label(img.path.to_string_lossy());
+                                        ui.label(&img.path);
                                         if ui.button("📋").clicked() {
                                             let mut ctx: ClipboardContext =
                                                 ClipboardProvider::new().unwrap();
-                                            ctx.set_contents(
-                                                img.path.to_string_lossy().to_string(),
-                                            )
-                                            .unwrap();
+                                            ctx.set_contents(img.path.clone()).unwrap();
                                         }
                                     });
 
-                                    ui.image(&img.texture, img.texture.size_vec2());
+                                    let display_img_size = Vec2::new(640.0, 480.0);
+                                    ui.image(&img.texture, display_img_size);
                                     if egui::Button::new("🗑 Move to trash")
                                         .fill(Color32::RED)
                                         .ui(ui)
                                         .clicked()
                                     {
-                                        info!("Moving {} to trash", img.path.display());
+                                        info!("Moving {} to trash", img.path);
                                         match trash::delete(&img.path) {
                                             Ok(_) => {
                                                 let res = self
@@ -320,8 +319,7 @@ impl eframe::App for MyApp {
                                             Err(err) => {
                                                 error!(
                                                     "Failed to move the file to the trash: {} {}",
-                                                    img.path.display(),
-                                                    err
+                                                    img.path, err
                                                 );
                                                 self.errors
                                                     // TODO: Maybe use Rc
