@@ -10,7 +10,7 @@ use walkdir::WalkDir;
 
 use eframe::egui;
 
-const KNOWN_EXTENSIONS: [&'static str; 12] = [
+const KNOWN_EXTENSIONS: [& str; 12] = [
     "png", "jpg", "jpeg", "gif", "bmp", "ico", "tiff", "webp", "avif", "pnm", "dds", "tga",
 ];
 
@@ -23,17 +23,21 @@ pub struct Image {
     texture: egui::TextureHandle,
 }
 
+enum Message {
+    AddImage(Result<Image, (PathBuf, ImageError)>),
+    RemoveImage(usize),
+}
+
 struct MyApp {
     picked_path: Option<String>,
     // images: Vec<Result<Image, ImageError>>,
     images: Vec<Image>,
     similar_images: Vec<(usize, usize)>,
-    images_receiver: std::sync::mpsc::Receiver<Result<Image, (PathBuf, ImageError)>>,
-    images_sender: std::sync::mpsc::Sender<Result<Image, (PathBuf, ImageError)>>,
+    images_receiver: std::sync::mpsc::Receiver<Message>,
+    images_sender: std::sync::mpsc::Sender<Message>,
     found_paths: Option<usize>,
     errors: Vec<(PathBuf, String)>,
     pool: rayon::ThreadPool,
-    delete_index: Option<usize>,
 }
 
 impl MyApp {
@@ -51,21 +55,16 @@ impl MyApp {
                 .num_threads(rayon::current_num_threads() - 1)
                 .build()
                 .unwrap(),
-            delete_index: None,
         }
     }
 }
 
-fn analyze_image(
-    path: PathBuf,
-    sender: std::sync::mpsc::Sender<Result<Image, (PathBuf, ImageError)>>,
-    ctx: egui::Context,
-) {
+fn analyze_image(path: PathBuf, sender: std::sync::mpsc::Sender<Message>, ctx: egui::Context) {
     info!("Hashing {}", path.display());
     let buffer = match std::fs::read(&path) {
         Err(err) => {
             error!("Failed to open {:?}: {}", path, err);
-            let _ = sender.send(Err((path, ImageError::IoError(err))));
+            let _ = sender.send(Message::AddImage(Err((path, ImageError::IoError(err)))));
             return;
         }
         Ok(buffer) => buffer,
@@ -73,7 +72,7 @@ fn analyze_image(
     let image = match image::load_from_memory(&buffer) {
         Err(err) => {
             error!("Failed to decode image {:?}: {}", path, err);
-            let _ = sender.send(Err((path, err)));
+            let _ = sender.send(Message::AddImage(Err((path, err))));
             return;
         }
         Ok(img) => img
@@ -82,10 +81,10 @@ fn analyze_image(
     };
     let (width, height) = image.dimensions();
     if (width as usize) * (height as usize) < MIN_IMAGE_SIZE {
-        let _ = sender.send(Err((
+        let _ = sender.send(Message::AddImage(Err((
             path,
             ImageError::Limits(LimitError::from_kind(LimitErrorKind::DimensionError)),
-        )));
+        ))));
         return;
     }
 
@@ -104,11 +103,11 @@ fn analyze_image(
         Default::default(),
     );
 
-    let _ = sender.send(Ok(Image {
+    let _ = sender.send(Message::AddImage(Ok(Image {
         hash,
         path,
         texture,
-    }));
+    })));
     ctx.request_repaint();
 }
 
@@ -128,8 +127,7 @@ impl eframe::App for MyApp {
                                 && e.path().extension().is_some()
                                 && KNOWN_EXTENSIONS
                                     .iter()
-                                    .find(|x| *x == &e.path().extension().unwrap())
-                                    .is_some()
+                                    .any(|x| x == &e.path().extension().unwrap())
                         })
                         .map(|e| e.path().to_owned())
                         .for_each(|path| {
@@ -165,11 +163,11 @@ impl eframe::App for MyApp {
                             err
                         ));
                     }
-                    Ok(Err((path, err))) => {
+                    Ok(Message::AddImage(Err((path, err)))) => {
                         ui.label(format!("Error: {} {}", path.display(), err));
                         self.errors.push((path, err.to_string()));
                     }
-                    Ok(Ok(image)) => {
+                    Ok(Message::AddImage(Ok(image))) => {
                         let j = self.images.len();
 
                         for (i, other) in self.images.iter().enumerate() {
@@ -178,6 +176,16 @@ impl eframe::App for MyApp {
                             }
                         }
                         self.images.push(image);
+                    }
+
+                    Ok(Message::RemoveImage(index)) => {
+                        self.images.remove(index);
+                        self.similar_images = self
+                            .similar_images
+                            .iter()
+                            .filter(|(i, j)| *i != index && *j != index)
+                            .map(|(i, j)| (*i, *j))
+                            .collect();
                     }
                 }
 
@@ -203,7 +211,9 @@ impl eframe::App for MyApp {
                                         info!("Moving {} to trash", img.path.display());
                                         match trash::delete(&img.path) {
                                             Ok(_) => {
-                                                self.delete_index = Some(*index);
+                                                let _ = self
+                                                    .images_sender
+                                                    .send(Message::RemoveImage(*index));
                                             }
                                             Err(err) => {
                                                 self.errors
@@ -218,7 +228,7 @@ impl eframe::App for MyApp {
                         egui::Separator::default().spacing(50.0).ui(ui);
                     }
 
-                    if self.errors.len() > 0 {
+                    if !self.errors.is_empty() {
                         ui.collapsing(format!("Errors ({})", self.errors.len()), |ui| {
                             for (path, err) in &self.errors {
                                 ui.label(format!("{} {}", path.display(), err));
@@ -226,25 +236,6 @@ impl eframe::App for MyApp {
                         });
                     }
                 });
-                if let Some(index) = self.delete_index {
-                    self.images.remove(index);
-                    self.similar_images = self
-                        .similar_images
-                        .iter()
-                        .filter(|(m, n)| {
-                            return *m != index && *n != index;
-                        })
-                        .map(|(m, n)| (*m, *n))
-                        .collect();
-
-                    for (i, j) in &self.similar_images {
-                        assert_ne!(*i, index);
-                        assert_ne!(*j, index);
-                    }
-                    self.found_paths = self.found_paths.map(|x| x - 1);
-
-                    self.delete_index = None;
-                }
             }
         });
     }
