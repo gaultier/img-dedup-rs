@@ -179,7 +179,6 @@ impl eframe::App for MyApp {
                     self.prep_for_analyze(path.clone());
                     let ctx = ctx.clone();
                     let sender = self.images_sender.clone();
-                    let path = path.clone();
                     self.pool.spawn(move || analyze(sender, path, ctx));
                 }
             }
@@ -217,9 +216,9 @@ impl eframe::App for MyApp {
 
                 match self.images_receiver.try_recv() {
                     Err(TryRecvError::Empty) => {}
-                    Err(err) => {
+                    Err(_err) => {
                         todo!();
-                                           }
+                    }
                     Ok(Message::WalkDirFinished(paths_count)) => {
                         self.found_paths = Some(paths_count);
                     }
