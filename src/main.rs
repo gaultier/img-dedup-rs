@@ -1,6 +1,7 @@
 use clipboard::ClipboardContext;
 use clipboard::ClipboardProvider;
 use egui::Button;
+use egui::Slider;
 use egui::{Color32, Widget};
 use image::error::{LimitError, LimitErrorKind};
 use image::ImageError;
@@ -19,7 +20,6 @@ const KNOWN_EXTENSIONS: [&str; 12] = [
 ];
 
 const MIN_IMAGE_SIZE: u64 = 10 * 1024; // 10 KiB
-const SIMILARITY_THRESHOLD: u32 = 25;
 
 #[derive(Clone)]
 pub struct Image {
@@ -45,6 +45,7 @@ struct MyApp {
     found_paths: Option<usize>,
     errors: Vec<(PathBuf, String)>,
     analyzed_bytes: ByteUnit,
+    similarity_threshold: u32,
 }
 
 impl MyApp {
@@ -59,6 +60,7 @@ impl MyApp {
             found_paths: None,
             errors: Vec::new(),
             analyzed_bytes: 0.bytes(),
+            similarity_threshold: 40,
         }
     }
 
@@ -185,6 +187,9 @@ impl eframe::App for MyApp {
                     rayon::spawn(move || analyze(sender, path, ctx));
                 }
             }
+            ui.add(
+                Slider::new(&mut self.similarity_threshold, 0..=100).text("similarity threshold"),
+            );
 
             let scanned = self.images.len() + self.errors.len();
             let similar = self.similar_images.len();
@@ -232,7 +237,7 @@ impl eframe::App for MyApp {
                     }
                     Ok(Message::AddImage(byte_count, Ok(image))) => {
                         for other in &self.images {
-                            if other.hash.dist(&image.hash) < SIMILARITY_THRESHOLD {
+                            if other.hash.dist(&image.hash) < self.similarity_threshold {
                                 self.similar_images.push((image.id, other.id));
                             }
                         }
@@ -283,10 +288,6 @@ impl eframe::App for MyApp {
                             .iter()
                             .find(|Image { id, .. }| id == id_b)
                             .unwrap();
-
-                        if a.hash.dist(&b.hash) > SIMILARITY_THRESHOLD {
-                            continue;
-                        }
 
                         ui.horizontal(|ui| {
                             for img in [a, b] {
