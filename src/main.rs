@@ -1,3 +1,4 @@
+use egui::{Color32, Widget};
 use image::error::{LimitError, LimitErrorKind};
 use image::ImageError;
 use img_hash::HasherConfig;
@@ -32,6 +33,7 @@ struct MyApp {
     found_paths: Option<usize>,
     errors: Vec<(PathBuf, String)>,
     pool: rayon::ThreadPool,
+    delete_index: Option<usize>,
 }
 
 impl MyApp {
@@ -49,6 +51,7 @@ impl MyApp {
                 .num_threads(rayon::current_num_threads() - 1)
                 .build()
                 .unwrap(),
+            delete_index: None,
         }
     }
 }
@@ -183,26 +186,65 @@ impl eframe::App for MyApp {
                         let a = &self.images[*i];
                         let b = &self.images[*j];
 
-                        if a.hash.dist(&b.hash) <= SIMILARITY_THRESHOLD {
-                            ui.horizontal(|ui| {
-                                ui.vertical(|ui| {
-                                    ui.label(a.path.to_string_lossy());
-                                    ui.image(&a.texture, a.texture.size_vec2());
-                                });
-                                ui.vertical(|ui| {
-                                    ui.label(b.path.to_string_lossy());
-                                    ui.image(&b.texture, b.texture.size_vec2());
-                                });
-                            });
+                        if a.hash.dist(&b.hash) > SIMILARITY_THRESHOLD {
+                            continue;
                         }
+
+                        ui.horizontal(|ui| {
+                            for (img, index) in [(a, i), (b, j)] {
+                                ui.vertical(|ui| {
+                                    ui.label(img.path.to_string_lossy());
+                                    ui.image(&img.texture, img.texture.size_vec2());
+                                    if egui::Button::new("Move to trash")
+                                        .fill(Color32::RED)
+                                        .ui(ui)
+                                        .clicked()
+                                    {
+                                        info!("Moving {} to trash", img.path.display());
+                                        match trash::delete(&img.path) {
+                                            Ok(_) => {
+                                                self.delete_index = Some(*index);
+                                            }
+                                            Err(err) => {
+                                                self.errors
+                                                    // TODO: Maybe use Rc
+                                                    .push((img.path.clone(), err.to_string()));
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                        egui::Separator::default().spacing(50.0).ui(ui);
                     }
 
-                    ui.collapsing(format!("Errors ({})", self.errors.len()), |ui| {
-                        for (path, err) in &self.errors {
-                            ui.label(format!("{} {}", path.display(), err));
-                        }
-                    });
+                    if self.errors.len() > 0 {
+                        ui.collapsing(format!("Errors ({})", self.errors.len()), |ui| {
+                            for (path, err) in &self.errors {
+                                ui.label(format!("{} {}", path.display(), err));
+                            }
+                        });
+                    }
                 });
+                if let Some(index) = self.delete_index {
+                    self.images.remove(index);
+                    self.similar_images = self
+                        .similar_images
+                        .iter()
+                        .filter(|(m, n)| {
+                            return *m != index && *n != index;
+                        })
+                        .map(|(m, n)| (*m, *n))
+                        .collect();
+
+                    for (i, j) in &self.similar_images {
+                        assert_ne!(*i, index);
+                        assert_ne!(*j, index);
+                    }
+                    self.found_paths = self.found_paths.map(|x| x - 1);
+
+                    self.delete_index = None;
+                }
             }
         });
     }

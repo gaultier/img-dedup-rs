@@ -14,4 +14,7 @@ log = "0.4.17"
 env_logger = "0.10.0"
 egui = "0.20.1"
 eframe = "0.20.1"
+# Pick File Dialog
 rfd = "0.10.0"
+# Move to trash
+trash = "3.0.0"
