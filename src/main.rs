@@ -231,6 +231,7 @@ impl eframe::App for MyApp {
                                                 debug!("Deleting {}: {:?}", index, res);
                                             }
                                             Err(err) => {
+                                                error!("Failed to move the file to the trash: {} {}", img.path.display(), err);
                                                 self.errors
                                                     // TODO: Maybe use Rc
                                                     .push((img.path.clone(), err.to_string()));
