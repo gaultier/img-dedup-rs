@@ -10,7 +10,7 @@ use walkdir::WalkDir;
 
 use eframe::egui;
 
-const KNOWN_EXTENSIONS: [& str; 12] = [
+const KNOWN_EXTENSIONS: [&str; 12] = [
     "png", "jpg", "jpeg", "gif", "bmp", "ico", "tiff", "webp", "avif", "pnm", "dds", "tga",
 ];
 
@@ -151,7 +151,7 @@ impl eframe::App for MyApp {
 
             if let Some(picked_path) = &self.picked_path {
                 ui.horizontal(|ui| {
-                    ui.label("Picked file:");
+                    ui.label("Picked directory:");
                     ui.monospace(picked_path);
                 });
 
@@ -179,6 +179,13 @@ impl eframe::App for MyApp {
                     }
 
                     Ok(Message::RemoveImage(index)) => {
+                        info!(
+                            "Removing {}, images.len()={}, similar_images.len()={}",
+                            index,
+                            self.images.len(),
+                            self.similar_images.len()
+                        );
+
                         self.images.remove(index);
                         self.similar_images = self
                             .similar_images
@@ -186,6 +193,13 @@ impl eframe::App for MyApp {
                             .filter(|(i, j)| *i != index && *j != index)
                             .map(|(i, j)| (*i, *j))
                             .collect();
+                        info!(
+                            "Removed {}, images.len()={}, similar_images.len()={}",
+                            index,
+                            self.images.len(),
+                            self.similar_images.len()
+                        );
+                        self.found_paths = self.found_paths.map(|x| x - 1);
                     }
                 }
 
@@ -211,9 +225,10 @@ impl eframe::App for MyApp {
                                         info!("Moving {} to trash", img.path.display());
                                         match trash::delete(&img.path) {
                                             Ok(_) => {
-                                                let _ = self
+                                                let res = self
                                                     .images_sender
                                                     .send(Message::RemoveImage(*index));
+                                                debug!("Deleting {}: {:?}", index, res);
                                             }
                                             Err(err) => {
                                                 self.errors
@@ -242,6 +257,8 @@ impl eframe::App for MyApp {
 }
 
 fn main() {
+    env_logger::init();
+
     let options = eframe::NativeOptions {
         drag_and_drop_support: false,
         initial_window_size: Some(egui::vec2(1600.0, 900.0)),
