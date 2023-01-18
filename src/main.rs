@@ -260,16 +260,24 @@ impl eframe::App for MyApp {
                 }
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    for (i, j) in &self.similar_images {
-                        let a = &self.images[*i];
-                        let b = &self.images[*j];
+                    for (id_a, id_b) in &self.similar_images {
+                        let a = self
+                            .images
+                            .iter()
+                            .find(|Image { id, .. }| id == id_a)
+                            .unwrap();
+                        let b = self
+                            .images
+                            .iter()
+                            .find(|Image { id, .. }| id == id_b)
+                            .unwrap();
 
                         if a.hash.dist(&b.hash) > SIMILARITY_THRESHOLD {
                             continue;
                         }
 
                         ui.horizontal(|ui| {
-                            for (img, index) in [(a, i), (b, j)] {
+                            for img in [a, b] {
                                 ui.vertical(|ui| {
                                     ui.horizontal(|ui| {
                                         ui.label(img.path.to_string_lossy());
@@ -294,8 +302,8 @@ impl eframe::App for MyApp {
                                             Ok(_) => {
                                                 let res = self
                                                     .images_sender
-                                                    .send(Message::RemoveImage(*index));
-                                                debug!("Deleting {}: {:?}", index, res);
+                                                    .send(Message::RemoveImage(img.id));
+                                                debug!("Deleting {}: {:?}", img.id, res);
                                             }
                                             Err(err) => {
                                                 error!(
