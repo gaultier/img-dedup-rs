@@ -24,3 +24,5 @@ rfd = "0.10.0"
 trash = "3.0.0"
 # Copy
 clipboard = "0.5.0"
+# Human readable byte size
+ubyte = "0.10.3"

@@ -8,6 +8,7 @@ use log::{debug, error, info};
 use rayon::ThreadPoolBuilder;
 use std::path::PathBuf;
 use std::sync::mpsc::TryRecvError;
+use ubyte::{ByteUnit, ToByteUnit};
 use walkdir::WalkDir;
 
 use eframe::egui;
@@ -26,7 +27,7 @@ pub struct Image {
 }
 
 enum Message {
-    AddImage(Result<Image, (PathBuf, ImageError)>),
+    AddImage(usize, Result<Image, (PathBuf, ImageError)>),
     RemoveImage(usize),
 }
 
@@ -40,6 +41,7 @@ struct MyApp {
     found_paths: Option<usize>,
     errors: Vec<(PathBuf, String)>,
     pool: rayon::ThreadPool,
+    analyzed_bytes: ByteUnit,
 }
 
 impl MyApp {
@@ -57,6 +59,7 @@ impl MyApp {
                 .num_threads(rayon::current_num_threads() - 1)
                 .build()
                 .unwrap(),
+            analyzed_bytes: 0.bytes(),
         }
     }
 }
@@ -66,7 +69,7 @@ fn analyze_image(path: PathBuf, sender: std::sync::mpsc::Sender<Message>, ctx: e
     let buffer = match std::fs::read(&path) {
         Err(err) => {
             error!("Failed to open {:?}: {}", path, err);
-            let _ = sender.send(Message::AddImage(Err((path, ImageError::IoError(err)))));
+            let _ = sender.send(Message::AddImage(0, Err((path, ImageError::IoError(err)))));
             return;
         }
         Ok(buffer) => buffer,
@@ -74,7 +77,7 @@ fn analyze_image(path: PathBuf, sender: std::sync::mpsc::Sender<Message>, ctx: e
     let image = match image::load_from_memory(&buffer) {
         Err(err) => {
             error!("Failed to decode image {:?}: {}", path, err);
-            let _ = sender.send(Message::AddImage(Err((path, err))));
+            let _ = sender.send(Message::AddImage(buffer.len(), Err((path, err))));
             return;
         }
         Ok(img) => img
@@ -83,10 +86,13 @@ fn analyze_image(path: PathBuf, sender: std::sync::mpsc::Sender<Message>, ctx: e
     };
     let (width, height) = image.dimensions();
     if (width as usize) * (height as usize) < MIN_IMAGE_SIZE {
-        let _ = sender.send(Message::AddImage(Err((
-            path,
-            ImageError::Limits(LimitError::from_kind(LimitErrorKind::DimensionError)),
-        ))));
+        let _ = sender.send(Message::AddImage(
+            buffer.len(),
+            Err((
+                path,
+                ImageError::Limits(LimitError::from_kind(LimitErrorKind::DimensionError)),
+            )),
+        ));
         return;
     }
 
@@ -105,11 +111,14 @@ fn analyze_image(path: PathBuf, sender: std::sync::mpsc::Sender<Message>, ctx: e
         Default::default(),
     );
 
-    let _ = sender.send(Message::AddImage(Ok(Image {
-        hash,
-        path,
-        texture,
-    })));
+    let _ = sender.send(Message::AddImage(
+        buffer.len(),
+        Ok(Image {
+            hash,
+            path,
+            texture,
+        }),
+    ));
     ctx.request_repaint();
 }
 
@@ -122,6 +131,7 @@ impl eframe::App for MyApp {
                     self.images.clear();
                     self.similar_images.clear();
                     self.errors.clear();
+                    self.analyzed_bytes = 0.bytes();
 
                     let mut paths_count = 0usize;
                     WalkDir::new(path)
@@ -149,7 +159,10 @@ impl eframe::App for MyApp {
                 let scanned = self.images.len() + self.errors.len();
                 let similar = self.similar_images.len();
 
-                ui.label(format!("Analyzed {}/{}", scanned, total));
+                ui.label(format!(
+                    "Analyzed {}/{} ({:.2})",
+                    scanned, total, self.analyzed_bytes
+                ));
                 ui.add(egui::ProgressBar::new(scanned as f32 / total as f32).show_percentage());
                 ui.label(format!("Similar: {}/{}", similar, total * (total - 1) / 2));
             }
@@ -168,11 +181,12 @@ impl eframe::App for MyApp {
                             err
                         ));
                     }
-                    Ok(Message::AddImage(Err((path, err)))) => {
+                    Ok(Message::AddImage(byte_count, Err((path, err)))) => {
                         ui.label(format!("Error: {} {}", path.display(), err));
                         self.errors.push((path, err.to_string()));
+                        self.analyzed_bytes += byte_count;
                     }
-                    Ok(Message::AddImage(Ok(image))) => {
+                    Ok(Message::AddImage(byte_count, Ok(image))) => {
                         let j = self.images.len();
 
                         for (i, other) in self.images.iter().enumerate() {
@@ -181,6 +195,7 @@ impl eframe::App for MyApp {
                             }
                         }
                         self.images.push(image);
+                        self.analyzed_bytes += byte_count;
                     }
 
                     Ok(Message::RemoveImage(index)) => {
