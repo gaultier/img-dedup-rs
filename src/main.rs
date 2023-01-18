@@ -18,7 +18,7 @@ const KNOWN_EXTENSIONS: [&str; 12] = [
     "png", "jpg", "jpeg", "gif", "bmp", "ico", "tiff", "webp", "avif", "pnm", "dds", "tga",
 ];
 
-const MIN_IMAGE_SIZE: u64 = 60 * 60;
+const MIN_IMAGE_SIZE: u64 = 10 * 1024; // 10 KiB
 const SIMILARITY_THRESHOLD: u32 = 25;
 
 #[derive(Clone)]
