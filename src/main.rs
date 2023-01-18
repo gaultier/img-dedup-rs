@@ -301,7 +301,9 @@ impl eframe::App for MyApp {
                                         }
                                     });
 
-                                    let display_img_size = Vec2::new(640.0, 480.0);
+                                    let h = 480.0;
+                                    let w = h * img.texture.aspect_ratio();
+                                    let display_img_size = Vec2::new(w, h);
                                     ui.image(&img.texture, display_img_size);
                                     if egui::Button::new("🗑 Move to trash")
                                         .fill(Color32::RED)
