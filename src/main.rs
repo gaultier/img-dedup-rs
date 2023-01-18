@@ -37,7 +37,6 @@ enum Message {
 
 struct MyApp {
     picked_path: Option<String>,
-    // images: Vec<Result<Image, ImageError>>,
     images: Vec<Image>,
     similar_images: Vec<(usize, usize)>,
     images_receiver: std::sync::mpsc::Receiver<Message>,
@@ -119,7 +118,7 @@ fn analyze_image(
     }
 
     info!("Hashing {}", path.display());
-    let buffer = match std::fs::read(&path) {
+    let buffer = match std::fs::read(path) {
         Err(err) => {
             error!("Failed to open {:?}: {}", path, err);
             let _ = sender.send(Message::AddImage(
