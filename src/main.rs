@@ -21,10 +21,12 @@ const KNOWN_EXTENSIONS: [&str; 12] = [
 const MIN_IMAGE_SIZE: usize = 60 * 60;
 const SIMILARITY_THRESHOLD: u32 = 25;
 
+#[derive(Clone)]
 pub struct Image {
     path: PathBuf,
     hash: img_hash::ImageHash,
     texture: egui::TextureHandle,
+    id: usize,
 }
 
 enum Message {
@@ -63,9 +65,46 @@ impl MyApp {
             analyzed_bytes: 0.bytes(),
         }
     }
+
+    fn analyze(&mut self, path: PathBuf, ctx: &egui::Context) {
+        self.picked_path = Some(path.to_string_lossy().to_string());
+
+        self.images.clear();
+        self.similar_images.clear();
+        self.errors.clear();
+        self.analyzed_bytes = 0.bytes();
+
+        let mut paths_count = 0usize;
+        let mut id = 0usize;
+        WalkDir::new(path)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_type().is_file()
+                    && e.path().extension().is_some()
+                    && KNOWN_EXTENSIONS
+                        .iter()
+                        .any(|x| x == &e.path().extension().unwrap())
+            })
+            .map(|e| e.path().to_owned())
+            .for_each(|path| {
+                paths_count += 1;
+                id += 1;
+                let ctx = ctx.clone();
+                let sender = self.images_sender.clone();
+                self.pool
+                    .spawn(move || analyze_image(path, sender, ctx, id));
+            });
+        self.found_paths = Some(paths_count);
+    }
 }
 
-fn analyze_image(path: PathBuf, sender: std::sync::mpsc::Sender<Message>, ctx: egui::Context) {
+fn analyze_image(
+    path: PathBuf,
+    sender: std::sync::mpsc::Sender<Message>,
+    ctx: egui::Context,
+    id: usize,
+) {
     info!("Hashing {}", path.display());
     let buffer = match std::fs::read(&path) {
         Err(err) => {
@@ -121,6 +160,7 @@ fn analyze_image(path: PathBuf, sender: std::sync::mpsc::Sender<Message>, ctx: e
             hash,
             path,
             texture,
+            id,
         }),
     ));
     ctx.request_repaint();
@@ -135,31 +175,7 @@ impl eframe::App for MyApp {
                 .clicked()
             {
                 if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                    self.picked_path = Some(path.display().to_string());
-                    self.images.clear();
-                    self.similar_images.clear();
-                    self.errors.clear();
-                    self.analyzed_bytes = 0.bytes();
-
-                    let mut paths_count = 0usize;
-                    WalkDir::new(path)
-                        .into_iter()
-                        .filter_map(|e| e.ok())
-                        .filter(|e| {
-                            e.file_type().is_file()
-                                && e.path().extension().is_some()
-                                && KNOWN_EXTENSIONS
-                                    .iter()
-                                    .any(|x| x == &e.path().extension().unwrap())
-                        })
-                        .map(|e| e.path().to_owned())
-                        .for_each(|path| {
-                            paths_count += 1;
-                            let ctx = ctx.clone();
-                            let sender = self.images_sender.clone();
-                            self.pool.spawn(move || analyze_image(path, sender, ctx));
-                        });
-                    self.found_paths = Some(paths_count);
+                    self.analyze(path, ctx);
                 }
             }
 
@@ -203,37 +219,39 @@ impl eframe::App for MyApp {
                         self.analyzed_bytes += byte_count;
                     }
                     Ok(Message::AddImage(byte_count, Ok(image))) => {
-                        let j = self.images.len();
-
-                        for (i, other) in self.images.iter().enumerate() {
+                        for other in &self.images {
                             if other.hash.dist(&image.hash) < SIMILARITY_THRESHOLD {
-                                // FIXME
-                                self.similar_images.push((i, j));
+                                self.similar_images.push((image.id, other.id));
                             }
                         }
                         self.images.push(image);
                         self.analyzed_bytes += byte_count;
                     }
 
-                    Ok(Message::RemoveImage(index)) => {
+                    Ok(Message::RemoveImage(rm_id)) => {
                         info!(
                             "Removing {}, images.len()={}, similar_images.len()={}",
-                            index,
+                            rm_id,
                             self.images.len(),
                             self.similar_images.len()
                         );
 
-                        self.images.remove(index);
-                        // FIXME
+                        self.images = self
+                            .images
+                            .clone()
+                            .into_iter()
+                            .filter(|Image { id, .. }| *id != rm_id)
+                            .collect();
+
                         self.similar_images = self
                             .similar_images
                             .iter()
-                            .filter(|(i, j)| *i != index && *j != index)
+                            .filter(|(id_a, id_b)| *id_a != rm_id && *id_b != rm_id)
                             .map(|(i, j)| (*i, *j))
                             .collect();
                         info!(
                             "Removed {}, images.len()={}, similar_images.len()={}",
-                            index,
+                            rm_id,
                             self.images.len(),
                             self.similar_images.len()
                         );
