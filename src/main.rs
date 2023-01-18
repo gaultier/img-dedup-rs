@@ -6,7 +6,6 @@ use image::error::{LimitError, LimitErrorKind};
 use image::ImageError;
 use img_hash::HasherConfig;
 use log::{debug, error, info};
-use rayon::ThreadPoolBuilder;
 use std::path::PathBuf;
 use std::sync::mpsc::TryRecvError;
 use ubyte::{ByteUnit, ToByteUnit};
@@ -44,7 +43,6 @@ struct MyApp {
     images_sender: std::sync::mpsc::Sender<Message>,
     found_paths: Option<usize>,
     errors: Vec<(PathBuf, String)>,
-    pool: rayon::ThreadPool,
     analyzed_bytes: ByteUnit,
 }
 
@@ -59,10 +57,6 @@ impl MyApp {
             images: Vec::new(),
             found_paths: None,
             errors: Vec::new(),
-            pool: ThreadPoolBuilder::new()
-                .num_threads(rayon::current_num_threads() - 2)
-                .build()
-                .unwrap(),
             analyzed_bytes: 0.bytes(),
         }
     }
@@ -179,7 +173,7 @@ impl eframe::App for MyApp {
                     self.prep_for_analyze(path.clone());
                     let ctx = ctx.clone();
                     let sender = self.images_sender.clone();
-                    self.pool.spawn(move || analyze(sender, path, ctx));
+                    rayon::spawn(move || analyze(sender, path, ctx));
                 }
             }
 
