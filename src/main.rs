@@ -53,6 +53,56 @@ impl MyApp {
     }
 }
 
+fn analyze_image(
+    path: PathBuf,
+    sender: std::sync::mpsc::Sender<Result<Image, (PathBuf, ImageError)>>,
+    ctx: egui::Context,
+) {
+    info!("Hashing {}", path.display());
+    let image = image::open(path.as_path());
+
+    let image = match image {
+        Err(err) => {
+            error!("Failed to open {:?}: {}", path, err);
+            let _ = sender.send(Err((path, err)));
+            return;
+        }
+        Ok(img) => img
+            .resize(800, 600, img_hash::FilterType::Nearest)
+            .to_rgba8(),
+    };
+    let (width, height) = image.dimensions();
+    if (width as usize) * (height as usize) < MIN_IMAGE_SIZE {
+        let _ = sender.send(Err((
+            path,
+            ImageError::Limits(LimitError::from_kind(LimitErrorKind::DimensionError)),
+        )));
+        return;
+    }
+
+    let hasher = HasherConfig::new()
+        .hash_size(16, 16)
+        .hash_alg(img_hash::HashAlg::DoubleGradient)
+        .to_hasher();
+
+    let hash = hasher.hash_image(&image);
+
+    debug!("{} hashed", path.display());
+
+    let texture = ctx.load_texture(
+        path.to_string_lossy(),
+        egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], &image),
+        Default::default(),
+    );
+
+    let _ = sender.send(Ok(Image {
+        hash,
+        path,
+        texture,
+    }));
+    ctx.request_repaint();
+}
+
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -77,56 +127,7 @@ impl eframe::App for MyApp {
                             paths_count += 1;
                             let ctx = ctx.clone();
                             let sender = self.images_sender.clone();
-                            self.pool.spawn(move || {
-                                info!("Hashing {}", path.display());
-                                let image = image::open(path.as_path());
-
-                                let image = match image {
-                                    Err(err) => {
-                                        error!("Failed to open {:?}: {}", path, err);
-                                        let _ = sender.send(Err((path, err)));
-                                        return;
-                                    }
-                                    Ok(img) => img
-                                        .resize(800, 600, img_hash::FilterType::Nearest)
-                                        .to_rgba8(),
-                                };
-                                let (width, height) = image.dimensions();
-                                if (width as usize) * (height as usize) < MIN_IMAGE_SIZE {
-                                    let _ = sender.send(Err((
-                                        path,
-                                        ImageError::Limits(LimitError::from_kind(
-                                            LimitErrorKind::DimensionError,
-                                        )),
-                                    )));
-                                    return;
-                                }
-
-                                let hasher = HasherConfig::new()
-                                    .hash_size(16, 16)
-                                    .hash_alg(img_hash::HashAlg::DoubleGradient)
-                                    .to_hasher();
-
-                                let hash = hasher.hash_image(&image);
-
-                                debug!("{} hashed", path.display());
-
-                                let texture = ctx.load_texture(
-                                    path.to_string_lossy(),
-                                    egui::ColorImage::from_rgba_unmultiplied(
-                                        [width as usize, height as usize],
-                                        &image,
-                                    ),
-                                    Default::default(),
-                                );
-
-                                let _ = sender.send(Ok(Image {
-                                    hash,
-                                    path,
-                                    texture,
-                                }));
-                                ctx.request_repaint();
-                            });
+                            self.pool.spawn(move || analyze_image(path, sender, ctx));
                         });
                     self.found_paths = Some(paths_count);
                 }
