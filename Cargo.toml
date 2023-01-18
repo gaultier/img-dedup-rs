@@ -22,3 +22,5 @@ eframe = "0.20.1"
 rfd = "0.10.0"
 # Move to trash
 trash = "3.0.0"
+# Copy
+clipboard = "0.5.0"

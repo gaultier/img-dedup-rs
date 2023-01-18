@@ -1,3 +1,5 @@
+use clipboard::ClipboardContext;
+use clipboard::ClipboardProvider;
 use egui::{Color32, Widget};
 use image::error::{LimitError, LimitErrorKind};
 use image::ImageError;
@@ -215,12 +217,20 @@ impl eframe::App for MyApp {
                         ui.horizontal(|ui| {
                             for (img, index) in [(a, i), (b, j)] {
                                 ui.vertical(|ui| {
-                                    ui.label(img.path.to_string_lossy());
+                                    ui.horizontal(|ui| {
+                                        ui.label(img.path.to_string_lossy());
+                                        if ui.button("📋").clicked() {
+                                            let mut ctx: ClipboardContext =
+                                                ClipboardProvider::new().unwrap();
+                                            ctx.set_contents(
+                                                img.path.to_string_lossy().to_string(),
+                                            )
+                                            .unwrap();
+                                        }
+                                    });
+
                                     ui.image(&img.texture, img.texture.size_vec2());
-                                    if egui::Button::new("Move to trash")
-                                        .fill(Color32::RED)
-                                        .ui(ui)
-                                        .clicked()
+                                    if egui::Button::new("🗑 Move to trash").fill(Color32::RED).ui(ui).clicked()
                                     {
                                         info!("Moving {} to trash", img.path.display());
                                         match trash::delete(&img.path) {
@@ -231,7 +241,11 @@ impl eframe::App for MyApp {
                                                 debug!("Deleting {}: {:?}", index, res);
                                             }
                                             Err(err) => {
-                                                error!("Failed to move the file to the trash: {} {}", img.path.display(), err);
+                                                error!(
+                                                    "Failed to move the file to the trash: {} {}",
+                                                    img.path.display(),
+                                                    err
+                                                );
                                                 self.errors
                                                     // TODO: Maybe use Rc
                                                     .push((img.path.clone(), err.to_string()));
