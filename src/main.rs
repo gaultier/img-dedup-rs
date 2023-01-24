@@ -248,6 +248,8 @@ impl eframe::App for MyApp {
                             .iter()
                             .enumerate()
                             // Ignore deleted images i.e. with a tombstone
+                            // Caution: order for enumerate -> filter is important for indices
+                            // stored in `similar_images`.
                             .filter(|(_, Image { tombstone, .. })| !tombstone)
                             .for_each(|(i, other)| {
                                 if other.hash.dist(&image.hash) < self.similarity_threshold {
