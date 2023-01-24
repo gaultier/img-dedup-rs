@@ -27,7 +27,6 @@ pub struct Image {
     path: String,
     hash: img_hash::ImageHash,
     texture: egui::TextureHandle,
-    id: usize,
 }
 
 enum Message {
@@ -46,6 +45,7 @@ struct MyApp {
     errors: Vec<(String, String)>,
     analyzed_bytes: ByteUnit,
     similarity_threshold: u32,
+    clipboard: ClipboardContext,
 }
 
 impl MyApp {
@@ -61,6 +61,7 @@ impl MyApp {
             errors: Vec::new(),
             analyzed_bytes: 0.bytes(),
             similarity_threshold: 40,
+            clipboard: ClipboardProvider::new().unwrap(),
         }
     }
 
@@ -75,7 +76,6 @@ impl MyApp {
 
 fn analyze(sender: std::sync::mpsc::Sender<Message>, path: PathBuf, ctx: egui::Context) {
     let mut paths_count = 0usize;
-    let mut id = 0usize;
     WalkDir::new(path)
         .into_iter()
         .filter_map(|e| e.ok())
@@ -88,20 +88,14 @@ fn analyze(sender: std::sync::mpsc::Sender<Message>, path: PathBuf, ctx: egui::C
         })
         .for_each(|entry| {
             paths_count += 1;
-            id += 1;
             let ctx = ctx.clone();
             let sender = sender.clone();
-            rayon::spawn(move || analyze_image(entry, sender, ctx, id));
+            rayon::spawn(move || analyze_image(entry, sender, ctx));
         });
     let _ = sender.send(Message::WalkDirFinished(paths_count));
 }
 
-fn analyze_image(
-    entry: DirEntry,
-    sender: std::sync::mpsc::Sender<Message>,
-    ctx: egui::Context,
-    id: usize,
-) {
+fn analyze_image(entry: DirEntry, sender: std::sync::mpsc::Sender<Message>, ctx: egui::Context) {
     let path = entry.path();
 
     match entry.metadata() {
@@ -166,7 +160,6 @@ fn analyze_image(
             hash,
             path: path.to_string_lossy().to_string(),
             texture,
-            id,
         }),
     ));
     ctx.request_repaint();
@@ -214,8 +207,9 @@ impl eframe::App for MyApp {
                         ui.horizontal(|ui| {
                             ui.label(format!("{} {}", path, err));
                             if ui.button("📋").clicked() {
-                                let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
-                                ctx.set_contents(format!("{} {}", path, err)).unwrap();
+                                self.clipboard
+                                    .set_contents(format!("{} {}", path, err))
+                                    .unwrap();
                             }
                         });
                     }
@@ -241,39 +235,29 @@ impl eframe::App for MyApp {
                         self.analyzed_bytes += byte_count;
                     }
                     Ok(Message::AddImage(byte_count, Ok(image))) => {
-                        for other in &self.images {
+                        let image_idx = self.images.len();
+                        for (i, other) in self.images.iter().enumerate() {
                             if other.hash.dist(&image.hash) < self.similarity_threshold {
-                                self.similar_images.push((image.id, other.id));
+                                self.similar_images.push((image_idx, i));
                             }
                         }
                         self.images.push(image);
                         self.analyzed_bytes += byte_count;
                     }
 
-                    Ok(Message::RemoveImage(rm_id)) => {
+                    Ok(Message::RemoveImage(rm_idx)) => {
                         info!(
                             "Removing {}, images.len()={}, similar_images.len()={}",
-                            rm_id,
+                            rm_idx,
                             self.images.len(),
                             self.similar_images.len()
                         );
+                        self.similar_images
+                            .retain(|(i, j)| *i != rm_idx && *j != rm_idx);
 
-                        self.images = self
-                            .images
-                            .clone()
-                            .into_iter()
-                            .filter(|Image { id, .. }| *id != rm_id)
-                            .collect();
-
-                        self.similar_images = self
-                            .similar_images
-                            .iter()
-                            .filter(|(id_a, id_b)| *id_a != rm_id && *id_b != rm_id)
-                            .map(|(i, j)| (*i, *j))
-                            .collect();
                         info!(
                             "Removed {}, images.len()={}, similar_images.len()={}",
-                            rm_id,
+                            rm_idx,
                             self.images.len(),
                             self.similar_images.len()
                         );
@@ -282,27 +266,17 @@ impl eframe::App for MyApp {
                 }
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    for (id_a, id_b) in &self.similar_images {
-                        let a = self
-                            .images
-                            .iter()
-                            .find(|Image { id, .. }| id == id_a)
-                            .unwrap();
-                        let b = self
-                            .images
-                            .iter()
-                            .find(|Image { id, .. }| id == id_b)
-                            .unwrap();
+                    for (i, j) in &self.similar_images {
+                        let a = &self.images[*i];
+                        let b = &self.images[*j];
 
                         ui.horizontal(|ui| {
-                            for img in [a, b] {
+                            for (idx, img) in [(i, a), (j, b)] {
                                 ui.vertical(|ui| {
                                     ui.horizontal(|ui| {
                                         ui.label(&img.path);
                                         if ui.button("📋").clicked() {
-                                            let mut ctx: ClipboardContext =
-                                                ClipboardProvider::new().unwrap();
-                                            ctx.set_contents(img.path.clone()).unwrap();
+                                            self.clipboard.set_contents(img.path.clone()).unwrap();
                                         }
                                     });
 
@@ -320,8 +294,8 @@ impl eframe::App for MyApp {
                                             Ok(_) => {
                                                 let res = self
                                                     .images_sender
-                                                    .send(Message::RemoveImage(img.id));
-                                                debug!("Deleting {}: {:?}", img.id, res);
+                                                    .send(Message::RemoveImage(*idx));
+                                                debug!("Deleting {}: {:?}", idx, res);
                                             }
                                             Err(err) => {
                                                 error!(
