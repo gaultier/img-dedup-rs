@@ -26,16 +26,6 @@ pub struct Image {
     path: String,
     hash: img_hash::ImageHash,
     texture: egui::TextureHandle,
-    // Since `similar_images` holds indices to the `images` field, we do not want to remove items
-    // from `images` when the user deletes an image, since it would invalidate the content of
-    // `similar_images`. But we also do not want to consider this 'deleted' image for future
-    // matches (e.g. if the scan is still on-going). So we simply mark the image as 'removed' with a tombstone but it stays
-    // there.
-    // For now there is no GC step, we could consider it in case the memory usage (RAM/VRAM)
-    // grows too much.
-    // Alternatively we could define `images` as `Vec<Option<Image>>` to be able to free VRAM (the
-    // texture)
-    tombstone: bool,
 }
 
 enum Message {
@@ -46,7 +36,16 @@ enum Message {
 
 struct MyApp {
     picked_path: Option<String>,
-    images: Vec<Image>,
+    // Since `similar_images` holds indices to the `images` field, we do not want to remove items
+    // from `images` when the user deletes an image, since it would invalidate the content of
+    // `similar_images`. But we also do not want to consider this 'deleted' image for future
+    // matches (e.g. if the scan is still on-going). So we simply mark the image as 'removed' with a tombstone (`None`) but it stays
+    // there.
+    // For now there is no GC step, we could consider it in case the memory usage (RAM)
+    // grows too much.
+    // Using `None` instead of a `tombstone` field inside the struct helps reducing VRAM usage by
+    // dropping the GPU texture.
+    images: Vec<Option<Image>>,
     similar_images: Vec<(usize, usize)>,
     images_receiver: std::sync::mpsc::Receiver<Message>,
     images_sender: std::sync::mpsc::Sender<Message>,
@@ -169,7 +168,6 @@ fn analyze_image(entry: DirEntry, sender: std::sync::mpsc::Sender<Message>, ctx:
             hash,
             path: path.to_string_lossy().to_string(),
             texture,
-            tombstone: false,
         }),
     ));
     ctx.request_repaint();
@@ -249,16 +247,15 @@ impl eframe::App for MyApp {
                         self.images
                             .iter()
                             .enumerate()
-                            // Ignore deleted images i.e. with a tombstone
-                            // Caution: order for enumerate -> filter is important for indices
-                            // stored in `similar_images`.
-                            .filter(|(_, Image { tombstone, .. })| !tombstone)
-                            .for_each(|(i, other)| {
-                                if other.hash.dist(&image.hash) < self.similarity_threshold {
+                            .for_each(|(i, other)| match other {
+                                Some(Image { hash, .. })
+                                    if hash.dist(&image.hash) < self.similarity_threshold =>
+                                {
                                     self.similar_images.push((image_idx, i));
                                 }
+                                _ => {}
                             });
-                        self.images.push(image);
+                        self.images.push(Some(image));
                         self.analyzed_bytes += byte_count;
                     }
 
@@ -269,7 +266,7 @@ impl eframe::App for MyApp {
                             self.images.len(),
                             self.similar_images.len()
                         );
-                        self.images[rm_idx].tombstone = true;
+                        self.images[rm_idx] = None;
                         self.similar_images
                             .retain(|(i, j)| *i != rm_idx && *j != rm_idx);
 
@@ -285,8 +282,8 @@ impl eframe::App for MyApp {
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     for (i, j) in &self.similar_images {
-                        let a = &self.images[*i];
-                        let b = &self.images[*j];
+                        let a = self.images[*i].as_ref().unwrap();
+                        let b = self.images[*j].as_ref().unwrap();
 
                         ui.horizontal(|ui| {
                             let max_width = ui.available_width() / 2.0 - 10.0;
