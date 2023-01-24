@@ -276,18 +276,20 @@ impl eframe::App for MyApp {
                             for (idx, img) in [(i, a), (j, b)] {
                                 ui.vertical(|ui| {
                                     ui.horizontal(|ui| {
-                                        ui.label(&img.path);
+                                        // TODO: inline in struct?
+                                        ui.label(format!(
+                                            "{} ({}x{})",
+                                            img.path,
+                                            img.texture.size_vec2().x,
+                                            img.texture.size_vec2().y
+                                        ));
                                         if ui.button("📋").clicked() {
                                             self.clipboard.set_contents(img.path.clone()).unwrap();
                                         }
                                     });
 
                                     let texture_width = img.texture.size_vec2().x;
-                                    let w = if texture_width > max_width {
-                                        max_width
-                                    } else {
-                                        texture_width
-                                    };
+                                    let w = f32::clamp(texture_width, 0.0, max_width);
 
                                     let h = f32::clamp(
                                         w / img.texture.aspect_ratio(),
