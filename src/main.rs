@@ -271,6 +271,8 @@ impl eframe::App for MyApp {
                         let b = &self.images[*j];
 
                         ui.horizontal(|ui| {
+                            let max_width = ui.available_width() / 2.0 - 10.0;
+
                             for (idx, img) in [(i, a), (j, b)] {
                                 ui.vertical(|ui| {
                                     ui.horizontal(|ui| {
@@ -280,8 +282,19 @@ impl eframe::App for MyApp {
                                         }
                                     });
 
-                                    let h = 480.0; // FIXME
-                                    let w = h * img.texture.aspect_ratio();
+                                    let texture_width = img.texture.size_vec2().x;
+                                    let w = if texture_width > max_width {
+                                        max_width
+                                    } else {
+                                        texture_width
+                                    };
+
+                                    let h = f32::clamp(
+                                        w / img.texture.aspect_ratio(),
+                                        0.0,
+                                        img.texture.size_vec2().y,
+                                    );
+
                                     let display_img_size = Vec2::new(w, h);
                                     ui.image(&img.texture, display_img_size);
                                     if egui::Button::new("🗑 Move to trash")
