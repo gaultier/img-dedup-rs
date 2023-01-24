@@ -140,7 +140,7 @@ fn analyze_image(
             return;
         }
         Ok(img) => img
-            .resize(1600, 1200, img_hash::FilterType::Lanczos3)
+            // .resize(1600, 1200, img_hash::FilterType::Lanczos3)
             .to_rgba8(),
     };
 
@@ -212,6 +212,10 @@ impl eframe::App for MyApp {
                 ui.collapsing(format!("Errors ({})", self.errors.len()), |ui| {
                     for (path, err) in &self.errors {
                         ui.label(format!("{} {}", path, err));
+                        if ui.button("📋").clicked() {
+                            let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
+                            ctx.set_contents(err.to_owned()).unwrap();
+                        }
                     }
                 });
             }
@@ -231,7 +235,6 @@ impl eframe::App for MyApp {
                         self.found_paths = Some(paths_count);
                     }
                     Ok(Message::AddImage(byte_count, Err((path, err)))) => {
-                        ui.label(format!("Error: {} {}", path, err));
                         self.errors.push((path, err.to_string()));
                         self.analyzed_bytes += byte_count;
                     }
@@ -301,7 +304,7 @@ impl eframe::App for MyApp {
                                         }
                                     });
 
-                                    let h = 480.0;
+                                    let h = 480.0; // FIXME
                                     let w = h * img.texture.aspect_ratio();
                                     let display_img_size = Vec2::new(w, h);
                                     ui.image(&img.texture, display_img_size);
