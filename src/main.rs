@@ -211,11 +211,13 @@ impl eframe::App for MyApp {
             if !self.errors.is_empty() {
                 ui.collapsing(format!("Errors ({})", self.errors.len()), |ui| {
                     for (path, err) in &self.errors {
-                        ui.label(format!("{} {}", path, err));
-                        if ui.button("📋").clicked() {
-                            let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
-                            ctx.set_contents(err.to_owned()).unwrap();
-                        }
+                        ui.horizontal(|ui| {
+                            ui.label(format!("{} {}", path, err));
+                            if ui.button("📋").clicked() {
+                                let mut ctx: ClipboardContext = ClipboardProvider::new().unwrap();
+                                ctx.set_contents(format!("{} {}", path, err)).unwrap();
+                            }
+                        });
                     }
                 });
             }
