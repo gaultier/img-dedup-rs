@@ -355,6 +355,7 @@ fn main() {
     let options = eframe::NativeOptions {
         drag_and_drop_support: false,
         initial_window_size: Some(egui::vec2(1600.0, 900.0)),
+        maximized: true,
         ..Default::default()
     };
     eframe::run_native(
