@@ -33,6 +33,8 @@ pub struct Image {
     // there.
     // For now there is no GC step, we could consider it in case the memory usage (RAM/VRAM)
     // grows too much.
+    // Alternatively we could define `images` as `Vec<Option<Image>>` to be able to free VRAM (the
+    // texture)
     tombstone: bool,
 }
 
