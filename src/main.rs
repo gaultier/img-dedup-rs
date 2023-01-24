@@ -22,11 +22,18 @@ const KNOWN_EXTENSIONS: [&str; 12] = [
 
 const MIN_IMAGE_SIZE: u64 = 10 * 1024; // 10 KiB
 
-#[derive(Clone)]
 pub struct Image {
     path: String,
     hash: img_hash::ImageHash,
     texture: egui::TextureHandle,
+    // Since `similar_images` holds indices to the `images` field, we do not want to remove items
+    // from `images` when the user deletes an image, since it would invalidate the content of
+    // `similar_images`. But we also do not want to consider this 'deleted' image for future
+    // matches (e.g. if the scan is still on-going). So we simply mark the image as 'removed' with a tombstone but it stays
+    // there.
+    // For now there is no GC step, we could consider it in case the memory usage (RAM/VRAM)
+    // grows too much.
+    tombstone: bool,
 }
 
 enum Message {
@@ -160,6 +167,7 @@ fn analyze_image(entry: DirEntry, sender: std::sync::mpsc::Sender<Message>, ctx:
             hash,
             path: path.to_string_lossy().to_string(),
             texture,
+            tombstone: false,
         }),
     ));
     ctx.request_repaint();
@@ -236,11 +244,16 @@ impl eframe::App for MyApp {
                     }
                     Ok(Message::AddImage(byte_count, Ok(image))) => {
                         let image_idx = self.images.len();
-                        for (i, other) in self.images.iter().enumerate() {
-                            if other.hash.dist(&image.hash) < self.similarity_threshold {
-                                self.similar_images.push((image_idx, i));
-                            }
-                        }
+                        self.images
+                            .iter()
+                            .enumerate()
+                            // Ignore deleted images i.e. with a tombstone
+                            .filter(|(_, Image { tombstone, .. })| !tombstone)
+                            .for_each(|(i, other)| {
+                                if other.hash.dist(&image.hash) < self.similarity_threshold {
+                                    self.similar_images.push((image_idx, i));
+                                }
+                            });
                         self.images.push(image);
                         self.analyzed_bytes += byte_count;
                     }
@@ -252,6 +265,7 @@ impl eframe::App for MyApp {
                             self.images.len(),
                             self.similar_images.len()
                         );
+                        self.images[rm_idx].tombstone = true;
                         self.similar_images
                             .retain(|(i, j)| *i != rm_idx && *j != rm_idx);
 
